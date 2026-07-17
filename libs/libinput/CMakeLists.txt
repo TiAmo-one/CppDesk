@@ -1,4 +1,4 @@
-﻿add_library(libinput STATIC src/dummy.cpp)
+﻿add_library(libinput STATIC src/input.cpp)
 target_include_directories(libinput PUBLIC include)
 if(BUILD_TESTING)
     add_subdirectory(tests)
