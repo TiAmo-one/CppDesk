@@ -1,5 +1,6 @@
-﻿add_library(libnetwork STATIC src/dummy.cpp)
-target_include_directories(libnetwork PUBLIC include)
+﻿add_library(libnetwork STATIC src/udp_socket.cpp src/peer_channel.cpp)
+target_include_directories(libnetwork PUBLIC include ${CMAKE_SOURCE_DIR}/libs/libproto/include)
+target_link_libraries(libnetwork PUBLIC libproto ws2_32)
 if(BUILD_TESTING)
     add_subdirectory(tests)
 endif()
