@@ -1,0 +1,5 @@
+﻿add_library(libcapture STATIC src/dummy.cpp)
+target_include_directories(libcapture PUBLIC include)
+if(BUILD_TESTING)
+    add_subdirectory(tests)
+endif()

@@ -1,0 +1,5 @@
+﻿add_library(libencode STATIC src/dummy.cpp)
+target_include_directories(libencode PUBLIC include)
+if(BUILD_TESTING)
+    add_subdirectory(tests)
+endif()

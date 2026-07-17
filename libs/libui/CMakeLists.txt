@@ -1,0 +1,5 @@
+﻿add_library(libui STATIC src/dummy.cpp)
+target_include_directories(libui PUBLIC include)
+if(BUILD_TESTING)
+    add_subdirectory(tests)
+endif()

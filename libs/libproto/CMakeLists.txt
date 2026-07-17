@@ -1,0 +1,5 @@
+﻿add_library(libproto STATIC src/dummy.cpp)
+target_include_directories(libproto PUBLIC include)
+if(BUILD_TESTING)
+    add_subdirectory(tests)
+endif()
