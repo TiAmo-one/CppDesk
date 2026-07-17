@@ -1,4 +1,4 @@
-﻿add_library(libui STATIC src/render_window.cpp)
+add_library(libui STATIC src/render_window.cpp)
 target_include_directories(libui PUBLIC include)
 target_link_libraries(libui PUBLIC d2d1 dwrite)
 if(BUILD_TESTING)

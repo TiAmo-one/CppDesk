@@ -1,4 +1,4 @@
-﻿#include "libnetwork/hole_punch.h"
+#include "libnetwork/hole_punch.h"
 #include <ws2tcpip.h>
 #include <sodium.h>
 #include <chrono>

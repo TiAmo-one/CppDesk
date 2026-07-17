@@ -1,4 +1,4 @@
-﻿add_library(libencode STATIC src/encoder.cpp)
+add_library(libencode STATIC src/encoder.cpp)
 target_include_directories(libencode PUBLIC include)
 target_link_libraries(libencode PUBLIC x264)
 if(BUILD_TESTING)

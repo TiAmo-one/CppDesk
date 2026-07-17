@@ -1,3 +1,5 @@
-﻿add_library(libclipboard STATIC src/clipboard.cpp)
+add_library(libclipboard STATIC src/clipboard.cpp)
 target_include_directories(libclipboard PUBLIC include)
-if(BUILD_TESTING) add_subdirectory(tests) endif()
+if(BUILD_TESTING)
+    add_subdirectory(tests)
+endif()

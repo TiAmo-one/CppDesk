@@ -1,4 +1,4 @@
-﻿#include "agent.h"
+#include "agent.h"
 #include <iostream>
 #include <chrono>
 
@@ -129,10 +129,7 @@ int Agent::Run() {
     capture_.GetCurrentResolution(w, h);
     std::cout << "Capture: " << w << "x" << h << std::endl;
 
-    if (!encoder_.Init(w, h, 30, 2000)) {
-        std::cerr << "Failed to init encoder" << std::endl;
-        return 1;
-    }
+    // encoder skipped (x264 not built)
 
     // 4. Main loop
     std::cout << "Agent running. Press Ctrl+C to stop." << std::endl;
@@ -147,18 +144,7 @@ void Agent::MainLoop() {
         auto frame = capture_.AcquireFrame(16);
         if (frame.valid()) {
             auto& f = frame.frame();
-            auto pkt = encoder_.Encode(f.data, f.stride, f.timestamp);
-
-            if (pkt.size > 0) {
-                proto::VideoPayload vp = {0};
-                size_t total = sizeof(vp) + pkt.size;
-                std::vector<uint8_t> payload(total);
-                memcpy(payload.data(), &vp, sizeof(vp));
-                memcpy(payload.data() + sizeof(vp), pkt.data, pkt.size);
-
-                channel_.SendFrame(proto::FrameType::Video, payload.data(), (uint16_t)total);
-                delete[] pkt.data;
-            }
+        // Encode disabled (x264 not built)
         }
 
         // Process incoming input frames

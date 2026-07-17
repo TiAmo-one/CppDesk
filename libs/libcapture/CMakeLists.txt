@@ -1,4 +1,4 @@
-﻿add_library(libcapture STATIC src/capture.cpp)
+add_library(libcapture STATIC src/capture.cpp)
 target_include_directories(libcapture PUBLIC include)
 if(BUILD_TESTING)
     add_subdirectory(tests)

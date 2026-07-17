@@ -1,5 +1,6 @@
-﻿#include "libnetwork/stun.h"
+#include "libnetwork/stun.h"
 #include <cstring>
+#include <cstdlib>
 #include <ws2tcpip.h>
 
 static constexpr uint32_t STUN_MAGIC = 0x2112A442;

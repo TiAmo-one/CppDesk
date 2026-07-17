@@ -1,2 +1,2 @@
 ﻿{ "name": "remote-desktop", "version": "0.1.0",
-  "dependencies": ["x264","ffmpeg","libsodium","nlohmann-json","websocketpp","gtest"] }
+  "dependencies": ["ffmpeg","libsodium","nlohmann-json","gtest"] }

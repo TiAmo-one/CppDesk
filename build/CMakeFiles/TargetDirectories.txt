@@ -1,0 +1,12 @@
+C:/Users/17410/Desktop/remote control/build/CMakeFiles/ALL_BUILD.dir
+C:/Users/17410/Desktop/remote control/build/CMakeFiles/ZERO_CHECK.dir
+C:/Users/17410/Desktop/remote control/build/libs/libproto/CMakeFiles/libproto.dir
+C:/Users/17410/Desktop/remote control/build/libs/libcapture/CMakeFiles/libcapture.dir
+C:/Users/17410/Desktop/remote control/build/libs/libnetwork/CMakeFiles/libnetwork.dir
+C:/Users/17410/Desktop/remote control/build/libs/libinput/CMakeFiles/libinput.dir
+C:/Users/17410/Desktop/remote control/build/libs/libclipboard/CMakeFiles/libclipboard.dir
+C:/Users/17410/Desktop/remote control/build/libs/libfiletransfer/CMakeFiles/libfiletransfer.dir
+C:/Users/17410/Desktop/remote control/build/libs/libui/CMakeFiles/libui.dir
+C:/Users/17410/Desktop/remote control/build/apps/agent/CMakeFiles/agent.dir
+C:/Users/17410/Desktop/remote control/build/apps/controller/CMakeFiles/controller.dir
+C:/Users/17410/Desktop/remote control/build/apps/signal-server/CMakeFiles/signal-server.dir

@@ -1,4 +1,6 @@
-﻿#include "libclipboard.h"
+#include "libclipboard.h"
+#include <shellapi.h>
+#include <shlobj.h>
 
 namespace clipboard {
 

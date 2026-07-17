@@ -1,9 +1,9 @@
-﻿#pragma once
+#pragma once
 #include <string>
 #include <thread>
 #include <atomic>
 #include "libcapture.h"
-#include "libencode.h"
+//#include "libencode.h"  # requires x264
 #include "libnetwork.h"
 #include "libinput.h"
 #include "libclipboard.h"
@@ -35,7 +35,7 @@ private:
     sockaddr_in           peerAddr_ = {};
 
     capture::Capture      capture_;
-    encode::Encoder       encoder_;
+    //encode::Encoder encoder_;  # requires x264
 
     clipboard::Monitor    clipboard_;
     filetransfer::FileReceiver fileReceiver_;

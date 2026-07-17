@@ -1,0 +1,8 @@
+Package: ffmpeg-bin2c
+Version: 8.1.1
+Depends: vcpkg-cmake
+Architecture: x64-windows
+Multi-Arch: same
+Abi: bfdb92119fc535a102935c7d2d77306286f655bb8c7004890c40aac7f1763407
+Description: Host tool bin2c for FFmpeg build
+Status: install ok installed

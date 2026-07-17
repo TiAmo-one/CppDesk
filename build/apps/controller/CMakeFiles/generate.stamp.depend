@@ -1,0 +1,10 @@
+# CMake generation dependency list for this directory.
+C:/Program Files/CMake/share/cmake-4.4/Modules/CMakeFindDependencyMacro.cmake
+C:/Program Files/CMake/share/cmake-4.4/Modules/FindPackageHandleStandardArgs.cmake
+C:/Program Files/CMake/share/cmake-4.4/Modules/FindPackageMessage.cmake
+C:/Program Files/CMake/share/cmake-4.4/Modules/SelectLibraryConfigurations.cmake
+C:/Users/17410/Desktop/remote control/apps/controller/CMakeLists.txt
+C:/vcpkg-build/installed/x64-windows/share/ffmpeg/FindFFMPEG.cmake
+C:/vcpkg-build/installed/x64-windows/share/nlohmann_json/nlohmann_jsonConfig.cmake
+C:/vcpkg-build/installed/x64-windows/share/nlohmann_json/nlohmann_jsonConfigVersion.cmake
+C:/vcpkg-build/installed/x64-windows/share/nlohmann_json/nlohmann_jsonTargets.cmake

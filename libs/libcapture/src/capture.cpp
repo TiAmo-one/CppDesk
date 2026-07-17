@@ -1,4 +1,5 @@
-﻿#include "libcapture.h"
+#include "libcapture.h"
+#include <utility>
 #include <cassert>
 
 #pragma comment(lib, "dxgi.lib")
