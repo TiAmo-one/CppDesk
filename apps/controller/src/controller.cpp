@@ -35,18 +35,21 @@ void Controller::NetworkThread() {
                     uint16_t fw = drp->frameWidth, fh = drp->frameHeight;
 
                     // Allocate or reallocate backing buffer on resolution change
+                    // Detect new rect (coordinates changed) vs continuation
+                    bool newRect = (drp->left != reasmLeft_ || drp->top != reasmTop_ ||
+                                    drp->right != reasmRight_ || drp->bottom != reasmBottom_);
+
                     if (fw > 0 && fh > 0 && (fw != (uint16_t)decWidth_ || fh != (uint16_t)decHeight_)) {
                         decWidth_ = fw;
                         decHeight_ = fh;
                         reasmBuf_.resize(fw * fh * 4);
                         memset(reasmBuf_.data(), 0, reasmBuf_.size());
                         std::cout << "CTRL: buffer " << fw << "x" << fh << std::endl;
-                        reasmActive_ = false;
+                        newRect = true;
                     }
 
                     if (decWidth_ == 0 || decHeight_ == 0) return;
 
-                    // Fragment reassembly for this rect
                     uint32_t rectW = drp->right - drp->left;
                     uint32_t rectH = drp->bottom - drp->top;
                     if (rectW == 0 || rectH == 0) return;
@@ -54,7 +57,8 @@ void Controller::NetworkThread() {
                     uint32_t totalFrags = drp->totalFragments;
                     if (totalFrags == 0) totalFrags = 1;
 
-                    if (drp->fragmentIndex == 0) {
+                    // Start new reassembly on rect change or fragment 0
+                    if (newRect || drp->fragmentIndex == 0) {
                         reasmExpected_ = totalFrags * CHUNK;
                         if (tmpBuf_.size() < reasmExpected_)
                             tmpBuf_.resize(reasmExpected_);
@@ -286,4 +290,5 @@ int Controller::Run() {
     if (networkThread_.joinable()) networkThread_.join();
     return ret;
 }
+
 

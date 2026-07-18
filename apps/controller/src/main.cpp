@@ -1,4 +1,5 @@
-#include <cstdio>
+﻿#include <cstdio>
+#include <io.h>
 #include "controller.h"
 #include <string>
 #include <vector>
@@ -6,7 +7,8 @@
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR lpCmdLine, int) {
     FILE* fp;
     freopen_s(&fp, "C:\\Users\\17410\\Desktop\\remote control\\controller.log", "w", stdout);
-    freopen_s(&fp, "C:\\Users\\17410\\Desktop\\remote control\\controller.log", "a", stderr);
+    setvbuf(stdout, NULL, _IONBF, 0);
+    _dup2(_fileno(stdout), _fileno(stderr));
 
     std::string host = "127.0.0.1";
     std::string port = "8443";
