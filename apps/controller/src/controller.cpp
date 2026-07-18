@@ -1,6 +1,7 @@
 ﻿#include "controller.h"
 #include <iostream>
 #include <chrono>
+#include "libnetwork/stun.h"
 #include "libinput.h"
 
 Controller::Controller(HINSTANCE hInst, const std::string& serverHost,
@@ -213,6 +214,13 @@ int Controller::Run() {
                 } else if (type == "peer_connect") {
                     std::cout << "CTRL: peer_connect, sending SDP" << std::endl;
                     sockaddr_in stunAddr = {};
+                    if (!network::stun::GetMappedAddress(p2pSocket_.GetNative(), stunAddr)) {
+                        std::cerr << "CTRL: STUN query failed, using LAN-only candidates" << std::endl;
+                    } else {
+                        char ip[64];
+                        inet_ntop(AF_INET, &stunAddr.sin_addr, ip, sizeof(ip));
+                        std::cerr << "CTRL: STUN mapped: " << ip << ":" << ntohs(stunAddr.sin_port) << std::endl;
+                    }
                     auto sdp = network::BuildSdp(p2pSocket_.GetNative(), stunAddr, p2pSocket_.GetPort());
                     json sdpMsg;
                     sdpMsg["type"] = "sdp";
@@ -246,12 +254,24 @@ int Controller::Run() {
                         }
                     }
                     if (peer.sin_port != 0) {
-                        std::cout << "CTRL: connect to " << remoteSdp.candidates[0] << std::endl;
-                        peerAddr_ = peer;
+                        // Try hole punch first, fall back to direct connect
+                        sockaddr_in punchedPeer = {};
+                        bool punched = network::HolePunch(p2pSocket_, remoteSdp, punchedPeer);
+
+                        sockaddr_in& targetAddr = punched ? punchedPeer : peer;
+                        if (punched) {
+                            char ip[64];
+                            inet_ntop(AF_INET, &punchedPeer.sin_addr, ip, sizeof(ip));
+                            std::cout << "CTRL: hole punch OK " << ip << ":" << ntohs(punchedPeer.sin_port) << std::endl;
+                        } else {
+                            std::cout << "CTRL: hole punch failed, direct connect..." << std::endl;
+                        }
+
+                        peerAddr_ = targetAddr;
                         uint8_t key[16];
                         std::cout << "CTRL: KeyExchange..." << std::endl;
-                        if (network::KeyExchange(p2pSocket_, peer, key)) {
-                            channel_.Init(p2pSocket_.GetNative(), peer);
+                        if (network::KeyExchange(p2pSocket_, targetAddr, key)) {
+                            channel_.Init(p2pSocket_.GetNative(), targetAddr);
                             channel_.SetKey(key);
                             p2pReady_ = true;
                             json done; done["type"] = "p2p_established";
@@ -259,6 +279,7 @@ int Controller::Run() {
                             std::cout << "CTRL: P2P ready" << std::endl;
                         } else {
                             std::cout << "CTRL: KeyExchange FAILED" << std::endl;
+                            network::DrainSocket(p2pSocket_);
                         }
                     } else {
                         std::cout << "CTRL: bad peer addr" << std::endl;
