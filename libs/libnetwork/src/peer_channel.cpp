@@ -11,9 +11,13 @@ bool PeerChannel::Init(SOCKET sock, const sockaddr_in& peer) {
     sock_ = sock;
     peer_ = peer;
     int bufSize = 16 * 1024 * 1024;
-    setsockopt(sock_, SOL_SOCKET, SO_RCVBUF, (const char*)&bufSize, sizeof(bufSize));
+    int ret = setsockopt(sock_, SOL_SOCKET, SO_RCVBUF, (const char*)&bufSize, sizeof(bufSize));
+    int actual = 0; int sz = sizeof(actual);
+    getsockopt(sock_, SOL_SOCKET, SO_RCVBUF, (char*)&actual, &sz);
+    char dbg[128];
+    snprintf(dbg, sizeof(dbg), "[CHAN] SO_RCVBUF requested=%d set_ok=%d actual=%d\n", bufSize, ret == 0, actual);
+    OutputDebugStringA(dbg);
     setsockopt(sock_, SOL_SOCKET, SO_SNDBUF, (const char*)&bufSize, sizeof(bufSize));
-    // Ensure non-blocking
     u_long mode = 1;
     ioctlsocket(sock_, FIONBIO, &mode);
     return true;
