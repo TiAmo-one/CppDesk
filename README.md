@@ -12,7 +12,7 @@
 <h3 align="center"><em>A tiny ninja that brings your desktop to you 🥷</em></h3>
 
 <p align="center">
-  <b><a href="#-中文版-">📖 中文版</a></b>  |  <b><a href="#-english-">📖 English</a></b>
+  <b><a href="#chinese">📖 中文版</a></b>  |  <b><a href="#english">📖 English</a></b>
 </p>
 
 ---
@@ -20,6 +20,8 @@
 <p align="center">
   <img src="https://img.icons8.com/color/48/null/remote-desktop.png" width="64" />
 </p>
+
+<a id="english"></a>
 
 # 🍰 English
 
@@ -29,7 +31,7 @@ Welcome to **CppDesk** — a pocket-sized remote desktop buddy handcrafted in C+
 
 Imagine a tiny ninja 🥷 that lives inside your Windows PC: it watches the screen for any changes (like a cat watching a laser pointer 🐱🔴), and the moment something moves, it whispers just *that tiny bit* through the network to your other computer. No bloat, no cloud nonsense, no "please wait buffering..." — just **your desktop, pixel-perfect, in real time**.
 
-We built this with love ❤️, caffeine ☕, and an unhealthy obsession with DXGI dirty rectangles. The result? A remote desktop that feels like you`+ "'" + `re sitting right there. ✨
+We built this with love ❤️, caffeine ☕, and an unhealthy obsession with DXGI dirty rectangles. The result? A remote desktop that feels like you're sitting right there. ✨
 
 ---
 
@@ -38,7 +40,7 @@ We built this with love ❤️, caffeine ☕, and an unhealthy obsession with DX
 <table>
   <tr>
     <td align="center" width="64">🎯</td>
-    <td><b>Dirty-Rect Wizardry</b><br/>DXGI Desktop Duplication tells us <i>exactly</i> which pixels changed. Static wallpaper? Zero bytes fly. Typing in Notepad? Only those tiny letters get sent. It`+ "'" + `s like having a magical eraser that only erases what needs erasing!</td>
+    <td><b>Dirty-Rect Wizardry</b><br/>DXGI Desktop Duplication tells us <i>exactly</i> which pixels changed. Static wallpaper? Zero bytes fly. Typing in Notepad? Only those tiny letters get sent. It's like having a magical eraser that only erases what needs erasing!</td>
   </tr>
   <tr>
     <td align="center" width="64">⚡</td>
@@ -46,7 +48,7 @@ We built this with love ❤️, caffeine ☕, and an unhealthy obsession with DX
   </tr>
   <tr>
     <td align="center" width="64">🔐</td>
-    <td><b>ECDH Encryption</b><br/>Powered by libsodium. Every packet gets its own secret handshake 🤝. Only you and your PC can read what`+ "'" + `s being said.</td>
+    <td><b>ECDH Encryption</b><br/>Powered by libsodium. Every packet gets its own secret handshake 🤝. Only you and your PC can read what's being said.</td>
   </tr>
   <tr>
     <td align="center" width="64">🧩</td>
@@ -81,14 +83,14 @@ We built this with love ❤️, caffeine ☕, and an unhealthy obsession with DX
 ```mermaid
 flowchart LR
     A["🖥️ Agent (Remote PC)<br/>🖌️ DXGI Screen Capture<br/>🎯 Dirty-Rect Engine<br/>⌨️ Input Injection"] <-->|"🔒 P2P UDP<br/>Encrypted Chunks"| C["🖱️ Controller (Your PC)<br/>🖼️ Direct2D Render<br/>🖱️ Input Forwarding"]
-    A ---|"📡 WebSocket<br/>Signaling"| S["🔗 Signal Server<br/>Matchmaker 🧑‍⚖️<br/>`+ "'" + `Here, you two, meet each other!`+ "'" + `"]
+    A ---|"📡 WebSocket<br/>Signaling"| S["🔗 Signal Server<br/>Matchmaker 🧑‍⚖️<br/>'Here, you two, meet each other!'"]
     C ---|"📡 WebSocket<br/>Signaling"| S
 ```
 
 | Little Hero 🦸 | Lives On | Superpower |
 |:---:|---|---|
 | **agent.exe** | The remote PC you want to control | Captures screen via DXGI, detects dirty rects 📐, sends tiny packets, and kindly injects your keyboard/mouse input as if you were there |
-| **controller.exe** | The PC you`+ "'" + `re sitting at | Receives dirty rects, patches them into its framebuffer 🧩, renders silky 60 FPS via Direct2D, and whispers your mouse movements back to the agent |
+| **controller.exe** | The PC you're sitting at | Receives dirty rects, patches them into its framebuffer 🧩, renders silky 60 FPS via Direct2D, and whispers your mouse movements back to the agent |
 | **signal-server.exe** | Anywhere (cloud, LAN, Raspberry Pi 🍓) | A lightweight WebSocket matchmaker that introduces agent and controller, then politely steps aside like a good wingman 😎 |
 
 ---
@@ -119,7 +121,7 @@ cmake -B build -S . -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems
 cmake --build build --config Release
 ```
 
-If everything goes green ✅, you`+ "'" + `re ready to fly!
+If everything goes green ✅, you're ready to fly!
 
 ### 🎮 Step 3: Run! (3 terminals, 3 little friends)
 
@@ -135,8 +137,8 @@ If everything goes green ✅, you`+ "'" + `re ready to fly!
 ```
 
 > 💡 **Local test**: use `127.0.0.1` everywhere — all three programs run on the same machine!  
-> 🌐 **Real remote**: replace `127.0.0.1` with the signal server`+ "'" + `s LAN/WAN IP. The agent and controller will still talk directly P2P after the introduction.  
-> 🔑 **Room & password**: use the same room name (`my-room`) and password (`secret123`) across agent and controller — it`+ "'" + `s how they find each other!
+> 🌐 **Real remote**: replace `127.0.0.1` with the signal server's LAN/WAN IP. The agent and controller will still talk directly P2P after the introduction.  
+> 🔑 **Room & password**: use the same room name (`my-room`) and password (`secret123`) across agent and controller — it's how they find each other!
 
 ---
 
@@ -182,7 +184,7 @@ CppDesk/                             # 🏠 Home sweet home
 
 ## 📊 Performance — Numbers That Make Us Proud
 
-| What`+ "'" + `s Happening | Data Per Frame | Bandwidth @60 FPS | Feeling |
+| What's Happening | Data Per Frame | Bandwidth @60 FPS | Feeling |
 |---|---|---|---|
 | 🧘 Static desktop | **0 bytes** ✨ | 0 MB/s | Pure zen |
 | ⌨️ Typing / coding | 0.1–1 MB | 6–60 MB/s | Like butter 🧈 |
@@ -191,18 +193,18 @@ CppDesk/                             # 🏠 Home sweet home
 
 > 🧪 **Test bench**: i7-12700H, 2560×1440, localhost loopback.  
 > For everyday desktop work (coding, browsing, chatting), each frame is typically **50–500 KB**.  
-> That`+ "'" + `s 97%+ smaller than sending raw full frames every time! 🎉
+> That's 97%+ smaller than sending raw full frames every time! 🎉
 
 ---
 
 ## 🔧 Troubleshooting — When Things Get Grumpy 😾
 
-| Symptom | Don`+ "'" + `t Panic! Try This |
+| Symptom | Don't Panic! Try This |
 |---|---|
 | 🟡 **White screen on first connect** | This was fixed! Check `agent.log` and `controller.log`. Look for `"P2P ready"` and `"First frame sent"`. If the KeyExchange says FAILED, just close the controller and reopen — the agent now handles reconnects gracefully ♻️ |
-| 🔴 **Reconnect shows white screen** | Fixed in `d4cbdc6` & `2acbf26`! The agent can now handle unlimited reconnects. Each re-handshake takes <1 second. Pull the latest code if you`+ "'" + `re behind! |
-| 🤔 **Build fails: can`+ "'" + `t find x264** | `libencode` is an optional module. If FFmpeg wasn`+ "'" + `t built with x264, just exclude `libencode` from the build — capture and streaming work perfectly without it! |
-| 😰 **CPU usage seems high** | The controller polls at ~2ms intervals for ultra-low latency. This is by design! On modern CPUs, it`+ "'" + `s barely noticeable. The agent is much lighter since it mostly sleeps between frames. |
+| 🔴 **Reconnect shows white screen** | Fixed in `d4cbdc6` & `2acbf26`! The agent can now handle unlimited reconnects. Each re-handshake takes <1 second. Pull the latest code if you're behind! |
+| 🤔 **Build fails: can't find x264** | `libencode` is an optional module. If FFmpeg wasn't built with x264, just exclude `libencode` from the build — capture and streaming work perfectly without it! |
+| 😰 **CPU usage seems high** | The controller polls at ~2ms intervals for ultra-low latency. This is by design! On modern CPUs, it's barely noticeable. The agent is much lighter since it mostly sleeps between frames. |
 | 📋 **Where are the logs?** | Agent → `agent.log`, Controller → `controller.log`, Signal Server → `signal.log` — all in the project root. Check them with `Get-Content *.log` in PowerShell! |
 | 🧟 **Long-running memory creep?** | Fixed! We audited every allocation. Thread-local buffers are reused, not re-allocated. No leaks detected in extended runs. |
 
@@ -232,7 +234,7 @@ MIT — Free as a bird! 🕊️ Do whatever makes you happy. (But maybe star the
 CppDesk stands on the shoulders of these giants:
 
 - **[FFmpeg](https://ffmpeg.org/)** — video encoding/decoding magic 🎬
-- **[libsodium](https://doc.libsodium.org/)** — cryptography that doesn`+ "'" + `t hurt your brain 🔐
+- **[libsodium](https://doc.libsodium.org/)** — cryptography that doesn't hurt your brain 🔐
 - **[nlohmann/json](https://github.com/nlohmann/json)** — JSON for Modern C++, a thing of beauty 📝
 - **Microsoft DXGI & Direct2D** — the graphics APIs that make this possible 🎨
 
@@ -251,6 +253,8 @@ And to every open-source contributor who ever wrote a line of code with love —
 ---
 
 ---
+
+<a id="chinese"></a>
 
 # 🍜 中文版
 
@@ -312,7 +316,7 @@ And to every open-source contributor who ever wrote a line of code with love —
 ```mermaid
 flowchart LR
     A["🖥️ Agent 被控端<br/>🖌️ DXGI 屏幕采集<br/>🎯 脏矩形引擎<br/>⌨️ 输入注入"] <-->|"🔒 P2P UDP<br/>加密分块传输"| C["🖱️ Controller 主控端<br/>🖼️ Direct2D 渲染<br/>🖱️ 输入转发"]
-    A ---|"📡 WebSocket<br/>信令握手"| S["🔗 Signal Server<br/>红娘牵线 🧑‍⚖️<br/>`+ "'" + `来，你们俩认识一下！`+ "'" + `"]
+    A ---|"📡 WebSocket<br/>信令握手"| S["🔗 Signal Server<br/>红娘牵线 🧑‍⚖️<br/>'来，你们俩认识一下！'"]
     C ---|"📡 WebSocket<br/>信令握手"| S
 ```
 
