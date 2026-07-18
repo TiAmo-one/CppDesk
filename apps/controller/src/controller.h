@@ -10,12 +10,6 @@
 #include "libproto.h"
 #include <nlohmann/json.hpp>
 
-extern "C" {
-#include <libavcodec/avcodec.h>
-#include <libavutil/imgutils.h>
-#include <libswscale/swscale.h>
-}
-
 using json = nlohmann::json;
 
 class Controller {
@@ -28,8 +22,6 @@ public:
 
 private:
     void NetworkThread();
-    bool InitDecoder(int width, int height);
-    std::vector<uint8_t> DecodeFrame(const uint8_t* data, int len);
 
     HINSTANCE   hInst_;
     std::string serverHost_;
@@ -48,18 +40,29 @@ private:
     std::atomic<bool> running_{true};
     std::thread networkThread_;
 
-    // Decoder
-    AVCodecContext* codecCtx_ = nullptr;
-    SwsContext*     swsCtx_   = nullptr;
-    AVFrame*        decFrame_ = nullptr;
     int decWidth_ = 0, decHeight_ = 0;
 
-    // Frame reassembly
+    // Backing buffer for dirty rect accumulation
     std::vector<uint8_t> reasmBuf_;
+    bool hasNewFrame_ = false;
+
+    // Fragment reassembly for current dirty rect
+    std::vector<uint8_t> tmpBuf_;
     uint32_t reasmWritten_ = 0;
     uint32_t reasmExpected_ = 0;
     bool     reasmActive_ = false;
-    bool     resolutionChanged_ = false;
+    int16_t  reasmLeft_ = 0, reasmTop_ = 0, reasmRight_ = 0, reasmBottom_ = 0;
+
+    // Raw BGRA fallback
+    std::vector<uint8_t> rawReasmBuf_;
+    uint32_t rawReasmWritten_ = 0;
+    uint32_t rawReasmExpected_ = 0;
+    bool     rawReasmActive_ = false;
+
+    // FFmpeg decoder stubs (not used currently)
+    void* codecCtx_ = nullptr;
+    void* swsCtx_   = nullptr;
+    void* decFrame_ = nullptr;
 
     filetransfer::FileSender   fileSender_;
     filetransfer::FileReceiver fileReceiver_;

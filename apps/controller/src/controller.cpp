@@ -1,4 +1,4 @@
-#include "controller.h"
+﻿#include "controller.h"
 #include <iostream>
 #include <chrono>
 #include "libinput.h"
@@ -12,80 +12,148 @@ Controller::Controller(HINSTANCE hInst, const std::string& serverHost,
 Controller::~Controller() {
     running_ = false;
     if (networkThread_.joinable()) networkThread_.join();
-    if (codecCtx_) avcodec_free_context(&codecCtx_);
-    if (decFrame_) av_frame_free(&decFrame_);
-    if (swsCtx_)   sws_freeContext(swsCtx_);
 }
 
-bool Controller::InitDecoder(int, int) { return false; }
-std::vector<uint8_t> Controller::DecodeFrame(const uint8_t*, int) { return {}; }
-
 void Controller::NetworkThread() {
-    constexpr uint32_t CHUNK = 65480;
-    // lastFrameTime removed (no throttle)
-
+    constexpr uint32_t CHUNK = 65472;
     int pollCount = 0;
+    auto lastDisplayTime = std::chrono::steady_clock::now();
+
     while (running_) {
         signal_.Poll(p2pReady_ ? 0 : 100);
         if (p2pReady_) {
-            int pkts = channel_.Poll(2, [this](proto::FrameType type, uint64_t,
+            int pkts = channel_.Poll(1, [this, &lastDisplayTime](proto::FrameType type, uint64_t,
                                       const uint8_t* data, uint16_t len) {
-                if (type == proto::FrameType::Video) {
+
+                if (type == proto::FrameType::DirtyRect) {
+                    auto* drp = (const proto::DirtyRectPayload*)data;
+                    int hdrSize = (int)sizeof(proto::DirtyRectPayload);
+                    const uint8_t* rawData = data + hdrSize;
+                    int rawLen = len - hdrSize;
+                    if (rawLen <= 0) return;
+
+                    uint16_t fw = drp->frameWidth, fh = drp->frameHeight;
+
+                    // Allocate or reallocate backing buffer on resolution change
+                    if (fw > 0 && fh > 0 && (fw != (uint16_t)decWidth_ || fh != (uint16_t)decHeight_)) {
+                        decWidth_ = fw;
+                        decHeight_ = fh;
+                        reasmBuf_.resize(fw * fh * 4);
+                        memset(reasmBuf_.data(), 0, reasmBuf_.size());
+                        std::cout << "CTRL: buffer " << fw << "x" << fh << std::endl;
+                        reasmActive_ = false;
+                    }
+
+                    if (decWidth_ == 0 || decHeight_ == 0) return;
+
+                    // Fragment reassembly for this rect
+                    uint32_t rectW = drp->right - drp->left;
+                    uint32_t rectH = drp->bottom - drp->top;
+                    if (rectW == 0 || rectH == 0) return;
+                    uint32_t rectSize = rectW * rectH * 4;
+                    uint32_t totalFrags = drp->totalFragments;
+                    if (totalFrags == 0) totalFrags = 1;
+
+                    if (drp->fragmentIndex == 0) {
+                        reasmExpected_ = totalFrags * CHUNK;
+                        if (tmpBuf_.size() < reasmExpected_)
+                            tmpBuf_.resize(reasmExpected_);
+                        reasmWritten_ = 0;
+                        reasmActive_ = true;
+                        reasmLeft_  = drp->left;
+                        reasmTop_   = drp->top;
+                        reasmRight_ = drp->right;
+                        reasmBottom_= drp->bottom;
+                    }
+
+                    if (reasmActive_) {
+                        uint32_t offset = drp->fragmentIndex * CHUNK;
+                        if (offset < reasmExpected_) {
+                            uint32_t copyLen = (std::min)((uint32_t)rawLen, reasmExpected_ - offset);
+                            if (offset + copyLen <= tmpBuf_.size()) {
+                                memcpy(tmpBuf_.data() + offset, rawData, copyLen);
+                                reasmWritten_ += copyLen;
+                            }
+                        }
+
+                        uint32_t actualSize = (std::min)(reasmWritten_, reasmExpected_);
+                        if (drp->fragmentIndex == totalFrags - 1 || actualSize >= rectSize) {
+                            // Patch rect into backing buffer
+                            int l = reasmLeft_, t = reasmTop_;
+                            int rw = reasmRight_ - l, rh = reasmBottom_ - t;
+                            for (int row = 0; row < rh && row * rw * 4 < (int)actualSize; row++) {
+                                int srcOff = row * rw * 4;
+                                int dstOff = ((t + row) * decWidth_ + l) * 4;
+                                int copyBytes = (std::min)(rw * 4, (int)actualSize - srcOff);
+                                if (dstOff + copyBytes <= (int)reasmBuf_.size()) {
+                                    memcpy(reasmBuf_.data() + dstOff, tmpBuf_.data() + srcOff, copyBytes);
+                                }
+                            }
+                            reasmActive_ = false;
+                            hasNewFrame_ = true;
+                        }
+                    }
+                }
+
+                else if (type == proto::FrameType::Video) {
+                    // Legacy full-frame (raw BGRA)
                     auto* vp = (const proto::VideoPayload*)data;
                     const uint8_t* rawData = data + sizeof(proto::VideoPayload);
                     int rawLen = len - (int)sizeof(proto::VideoPayload);
 
-                    uint16_t vpWidth = vp->width;
-                    uint16_t vpHeight = vp->height;
-                    if (vpWidth > 0 && vpHeight > 0 &&
-                        (vpWidth != (uint16_t)decWidth_ || vpHeight != (uint16_t)decHeight_)) {
-                        std::cout << "CTRL: resolution " << vpWidth << "x" << vpHeight << std::endl;
-                        decWidth_ = vpWidth;
-                        decHeight_ = vpHeight;
-                        resolutionChanged_ = true;
+                    if (vp->fragmentIndex == 0 && vp->width > 0 && vp->height > 0) {
+                        if (vp->width != (uint16_t)decWidth_ || vp->height != (uint16_t)decHeight_) {
+                            decWidth_ = vp->width;
+                            decHeight_ = vp->height;
+                            reasmBuf_.resize(decWidth_ * decHeight_ * 4);
+                            std::cout << "CTRL: raw " << decWidth_ << "x" << decHeight_ << std::endl;
+                        }
+                        rawReasmExpected_ = decWidth_ * decHeight_ * 4;
+                        if (rawReasmBuf_.size() != rawReasmExpected_)
+                            rawReasmBuf_.resize(rawReasmExpected_);
+                        rawReasmWritten_ = 0;
+                        rawReasmActive_ = true;
                     }
 
-                    if (resolutionChanged_) {
-                        reasmActive_ = false;
-                        reasmWritten_ = 0;
-                        reasmExpected_ = 0;
-                        resolutionChanged_ = false;
-                    }
-
-                    if (vp->fragmentIndex == 0 && decWidth_ > 0 && decHeight_ > 0) {
-                        reasmExpected_ = decWidth_ * decHeight_ * 4;
-                        if (reasmBuf_.size() != reasmExpected_)
-                            reasmBuf_.resize(reasmExpected_);
-                        reasmWritten_ = 0;
-                        reasmActive_ = true;
-                    }
-
-                    if (reasmActive_ && reasmExpected_ > 0) {
+                    if (rawReasmActive_ && rawReasmExpected_ > 0) {
                         uint32_t offset = vp->fragmentIndex * CHUNK;
-                        if (offset < reasmExpected_) {
-                            uint32_t copyLen = (std::min)((uint32_t)rawLen, reasmExpected_ - offset);
-                            if (offset + copyLen <= reasmBuf_.size()) {
-                                memcpy(reasmBuf_.data() + offset, rawData, copyLen);
-                                reasmWritten_ += copyLen;
+                        if (offset < rawReasmExpected_) {
+                            uint32_t copyLen = (std::min)((uint32_t)rawLen, rawReasmExpected_ - offset);
+                            if (offset + copyLen <= rawReasmBuf_.size()) {
+                                memcpy(rawReasmBuf_.data() + offset, rawData, copyLen);
+                                rawReasmWritten_ += copyLen;
                             }
                         }
                     }
 
-                    if (reasmActive_ && reasmWritten_ >= reasmExpected_ && reasmExpected_ > 0) {
-                        window_.UpdateFrame(reasmBuf_.data(), decWidth_, decHeight_, decWidth_ * 4);
+                    if (rawReasmActive_ && rawReasmWritten_ >= rawReasmExpected_ && rawReasmExpected_ > 0) {
+                        window_.UpdateFrame(rawReasmBuf_.data(), decWidth_, decHeight_, decWidth_ * 4);
+                        rawReasmActive_ = false;
+                        rawReasmWritten_ = 0;
+                        rawReasmExpected_ = 0;
                         static int cfc = 0;
-                        if (++cfc == 1) std::cout << "CTRL: FIRST FRAME DISPLAYED" << std::endl;
-                        reasmActive_ = false;
-                        reasmWritten_ = 0;
-                        reasmExpected_ = 0;
+                        if (++cfc == 1) std::cout << "CTRL: FIRST RAW FRAME" << std::endl;
                     }
                 }
             });
 
+            // Display accumulated dirty rects at ~60 FPS
+            if (hasNewFrame_ && !reasmBuf_.empty() && decWidth_ > 0 && decHeight_ > 0) {
+                auto now = std::chrono::steady_clock::now();
+                auto since = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastDisplayTime).count();
+                if (since >= 16) { // 60 Hz display
+                    window_.UpdateFrame(reasmBuf_.data(), decWidth_, decHeight_, decWidth_ * 4);
+                    lastDisplayTime = now;
+                    hasNewFrame_ = false;
+                    static int cfc2 = 0;
+                    if (++cfc2 == 1) std::cout << "CTRL: FIRST DIRTY FRAME " << decWidth_ << "x" << decHeight_ << std::endl;
+                }
+            }
+
             pollCount++;
             if (pollCount == 1)
                 std::cout << "CTRL: first poll, " << pkts << " pkts" << std::endl;
-            else if (pollCount % 60 == 0)
+            else if (pollCount % 120 == 0)
                 std::cout << "CTRL: poll " << pollCount << ", " << pkts << " pkts" << std::endl;
         }
     }
@@ -218,3 +286,4 @@ int Controller::Run() {
     if (networkThread_.joinable()) networkThread_.join();
     return ret;
 }
+

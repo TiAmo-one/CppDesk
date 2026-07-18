@@ -121,16 +121,53 @@ int Agent::Run() {
     return 0;
 }
 
+static void SendFragment(network::PeerChannel& channel, const std::vector<uint8_t>& buf,
+                         proto::FrameType ftype, const void* hdr, int hdrSize,
+                         uint32_t totalSize, std::atomic<bool>& p2pReady, std::atomic<bool>& running,
+                         int& sendFails) {
+    constexpr uint32_t MAX_CHUNK = 65472;
+    uint32_t totalFrags = (totalSize + MAX_CHUNK - 1) / MAX_CHUNK;
+    if (totalFrags == 0) totalFrags = 1;
+    uint32_t offset = 0;
+    for (uint32_t fi = 0; fi < totalFrags && running && p2pReady; fi++) {
+        if (fi > 0 && fi % 50 == 0) {} // signal poll is outside
+
+        uint16_t chunk = (uint16_t)(std::min)((uint32_t)MAX_CHUNK, totalSize - offset);
+        std::vector<uint8_t> msg(hdrSize + chunk);
+        memcpy(msg.data(), hdr, hdrSize);
+        // Patch fragmentIndex and totalFragments
+        uint32_t* fiPtr = (uint32_t*)(msg.data()); // first field is fragmentIndex
+        *fiPtr = fi;
+        uint32_t* tfPtr = fiPtr + 1;
+        *tfPtr = totalFrags;
+        memcpy(msg.data() + hdrSize, buf.data() + offset, chunk);
+
+        bool sent = false;
+        for (int retry = 0; retry < 3 && !sent && running && p2pReady; retry++) {
+            sent = channel.SendFrame(ftype, msg.data(), (uint16_t)msg.size());
+            if (!sent) { sendFails++; std::this_thread::yield(); }
+        }
+        if (sendFails > 10) {
+            std::cerr << "[AGENT] Too many send failures" << std::endl;
+            p2pReady = false;
+            return;
+        }
+        offset += chunk;
+    }
+}
+
 void Agent::MainLoop() {
     using namespace std::chrono;
-    constexpr uint32_t MAX_CHUNK = 65480;
+    std::cerr << "[AGENT] Entering MainLoop..." << std::endl;
 
-    int loopCount = 0;
     bool captureInit = false;
+    int frameCount = 0;
+    int sendFails = 0;
+    auto lastFrameTime = steady_clock::now();
+    sendBuf_.resize(65536);
 
     while (running_) {
         signal_.Poll(0);
-        loopCount++;
 
         if (p2pReady_) {
             if (!captureInit) {
@@ -143,93 +180,112 @@ void Agent::MainLoop() {
                 captureInit = true;
                 uint32_t capW, capH;
                 capture_.GetCurrentResolution(capW, capH);
-                std::cerr << "[AGENT] Capture: " << capW << "x" << capH << std::endl;
-                sendBuf_.resize(65536);
+                std::cerr << "[AGENT] Capture: " << capW << "x" << capH << " (dirty-rect mode)" << std::endl;
+                cachedFrame_.resize(capW * capH * 4);
+                cachedWidth_ = capW; cachedHeight_ = capH;
+                sendFails = 0;
             }
 
-            auto acqResult = capture_.AcquireFrame();
+            auto acqResult = capture_.AcquireFrame(30); // 30ms = ~33 FPS max
             if (acqResult.valid()) {
                 auto& frm = acqResult.frame();
                 uint32_t w = frm.width, h = frm.height;
                 uint32_t stride = frm.stride;
 
-                uint32_t dstW = w, dstH = h;
                 if (w != cachedWidth_ || h != cachedHeight_) {
                     cachedFrame_.resize(w * h * 4);
                     cachedWidth_ = w; cachedHeight_ = h;
-                    lastWidth_ = dstW; lastHeight_ = dstH;
                 }
 
-                const uint8_t* sendData = cachedFrame_.data();
+                // Copy full frame to local buffer
                 uint8_t* dst = cachedFrame_.data();
                 const uint8_t* src = frm.data;
                 if (stride == w * 4) {
                     memcpy(dst, src, w * h * 4);
                 } else {
-                    for (uint32_t row = 0; row < h; row++) {
+                    for (uint32_t row = 0; row < h; row++)
                         memcpy(dst + row * w * 4, src + row * stride, w * 4);
-                    }
                 }
 
-                uint32_t sendSize = cachedWidth_ * cachedHeight_ * 4;
-                auto* vp = (proto::VideoPayload*)sendBuf_.data();
-                vp->width = (uint16_t)dstW;
-                vp->height = (uint16_t)dstH;
-                uint32_t offset = 0;
-                uint32_t fragIdx = 0;
-                int sendFails = 0;
+                auto& dirtyRects = acqResult.dirtyRects();
+                int rectCount = (int)dirtyRects.size();
 
-                while (offset < sendSize && running_ && p2pReady_) {
-                    // Poll signal server during long send to detect disconnect promptly
-                    if (fragIdx % 50 == 0 && fragIdx > 0) {
-                        signal_.Poll(0);
-                        if (!p2pReady_) break;
-                    }
+                // Always send at least one rect on first frame or if dirty rects empty
+                bool forceFull = (frameCount == 0 || rectCount == 0);
+                if (forceFull) {
+                    // Send full frame as one big rect
+                    proto::DirtyRectPayload drp = {};
+                    drp.fragmentIndex  = 0;
+                    drp.totalFragments = 0; // patched in SendFragment
+                    drp.frameWidth  = (uint16_t)w;
+                    drp.frameHeight = (uint16_t)h;
+                    drp.left   = 0;
+                    drp.top    = 0;
+                    drp.right  = (int16_t)w;
+                    drp.bottom = (int16_t)h;
 
-                    uint16_t chunkSize = (uint16_t)(std::min)((uint32_t)MAX_CHUNK, sendSize - offset);
-                    vp->fragmentIndex = fragIdx++;
-                    memcpy(sendBuf_.data() + sizeof(proto::VideoPayload), sendData + offset, chunkSize);
-                    bool sent = false;
-                    for (int retry = 0; retry < 3 && !sent && running_ && p2pReady_; retry++) {
-                        sent = channel_.SendFrame(proto::FrameType::Video, sendBuf_.data(),
-                                                   (uint16_t)(sizeof(proto::VideoPayload) + chunkSize));
-                        if (!sent) {
-                            sendFails++;
-                            std::this_thread::yield();
+                    int rectSize = w * h * 4;
+                    SendFragment(channel_, cachedFrame_, proto::FrameType::DirtyRect,
+                                 &drp, sizeof(drp), rectSize, p2pReady_, running_, sendFails);
+                } else {
+                    // Send each dirty rect
+                    for (const auto& rect : dirtyRects) {
+                        if (!p2pReady_ || !running_) break;
+
+                        int rw = rect.right - rect.left;
+                        int rh = rect.bottom - rect.top;
+                        if (rw <= 0 || rh <= 0) continue;
+
+                        // Skip tiny rects (likely noise)
+                        if (rw * rh < 64) continue;
+
+                        proto::DirtyRectPayload drp = {};
+                        drp.fragmentIndex  = 0;
+                        drp.totalFragments = 0;
+                        drp.frameWidth  = (uint16_t)w;
+                        drp.frameHeight = (uint16_t)h;
+                        drp.left   = (int16_t)rect.left;
+                        drp.top    = (int16_t)rect.top;
+                        drp.right  = (int16_t)rect.right;
+                        drp.bottom = (int16_t)rect.bottom;
+
+                        // Extract rect pixels into temp buffer
+                        std::vector<uint8_t> rectPixels(rw * rh * 4);
+                        for (int row = 0; row < rh; row++) {
+                            memcpy(rectPixels.data() + row * rw * 4,
+                                   cachedFrame_.data() + (rect.top + row) * w * 4 + rect.left * 4,
+                                   rw * 4);
+                        }
+
+                        SendFragment(channel_, rectPixels, proto::FrameType::DirtyRect,
+                                     &drp, sizeof(drp), rectPixels.size(),
+                                     p2pReady_, running_, sendFails);
+
+                        // Poll signal server periodically
+                        static int rectSendCount = 0;
+                        if (++rectSendCount % 5 == 0) {
+                            signal_.Poll(0);
+                            if (!p2pReady_) break;
                         }
                     }
-
-                    // If every fragment is failing, peer is likely gone
-                    if (sendFails > 10 && fragIdx > 0 && (int)fragIdx <= sendFails) {
-                        std::cerr << "[AGENT] Too many send failures, peer likely disconnected" << std::endl;
-                        p2pReady_ = false;
-                        break;
-                    }
-
-                    offset += chunkSize;
                 }
 
-                static int frameCount = 0;
-                static auto lastPaceTime = steady_clock::now();
-                ++frameCount;
-
-                auto paceNow = steady_clock::now();
-                auto paceSince = duration_cast<milliseconds>(paceNow - lastPaceTime).count();
-                if (paceSince < 100) {
-                    std::this_thread::sleep_for(milliseconds(100 - paceSince));
-                }
-                lastPaceTime = steady_clock::now();
-
+                frameCount++;
                 if (frameCount == 1)
-                    std::cerr << "[AGENT] Frame 1 sent" << std::endl;
-                else if (frameCount % 30 == 0)
-                    std::cerr << "[AGENT] Frame " << frameCount << " sent" << std::endl;
-            } else {
-                std::this_thread::sleep_for(microseconds(500));
+                    std::cerr << "[AGENT] First frame sent (dirty rects: " << rectCount << ")" << std::endl;
+                else if (frameCount % 60 == 0)
+                    std::cerr << "[AGENT] Frame " << frameCount << " (" << rectCount << " rects)" << std::endl;
+
+                // 16ms pacing = 60 FPS capture rate (with dirty rects, bandwidth is low)
+                auto now = steady_clock::now();
+                auto since = duration_cast<milliseconds>(now - lastFrameTime).count();
+                if (since < 16) {
+                    std::this_thread::sleep_for(milliseconds(16 - since));
+                }
+                lastFrameTime = steady_clock::now();
+                sendFails = 0; // reset on successful frame
             }
         } else {
-            if (loopCount <= 3)
-                std::cerr << "[AGENT] Waiting for controller..." << std::endl;
             std::this_thread::sleep_for(milliseconds(100));
         }
 
@@ -238,19 +294,22 @@ void Agent::MainLoop() {
                                  const uint8_t* data, uint16_t len) {
             switch (type) {
             case proto::FrameType::MouseMove:
-                if (serverHost_ != "127.0.0.1" && len >= sizeof(proto::MouseMovePayload)) {
+                if (serverHost_ == "127.0.0.1") break;
+                if (len >= sizeof(proto::MouseMovePayload)) {
                     auto* m = (const proto::MouseMovePayload*)data;
                     input::MoveMouse(m->x, m->y);
                 }
                 break;
             case proto::FrameType::MouseBtn:
-                if (serverHost_ != "127.0.0.1" && len >= sizeof(proto::MouseBtnPayload)) {
+                if (serverHost_ == "127.0.0.1") break;
+                if (len >= sizeof(proto::MouseBtnPayload)) {
                     auto* b = (const proto::MouseBtnPayload*)data;
                     input::MouseButtonEvent((input::MouseButton)b->button, b->down != 0);
                 }
                 break;
             case proto::FrameType::KeyEvent:
-                if (serverHost_ != "127.0.0.1" && len >= sizeof(proto::KeyEventPayload)) {
+                if (serverHost_ == "127.0.0.1") break;
+                if (len >= sizeof(proto::KeyEventPayload)) {
                     auto* k = (const proto::KeyEventPayload*)data;
                     input::KeyEvent(k->vkCode, k->down != 0);
                 }
@@ -273,3 +332,6 @@ void Agent::MainLoop() {
     }
     std::cerr << "[AGENT] MainLoop exited" << std::endl;
 }
+
+
+

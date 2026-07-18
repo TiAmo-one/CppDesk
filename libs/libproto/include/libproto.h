@@ -5,7 +5,7 @@
 
 namespace proto {
 
-constexpr uint32_t MAGIC = 0x524F4B52; // "ROKR"
+constexpr uint32_t MAGIC = 0x524F4B52;
 
 enum class FrameType : uint8_t {
     Video          = 0x01,
@@ -17,30 +17,41 @@ enum class FrameType : uint8_t {
     FileBlock      = 0x07,
     Heartbeat      = 0x08,
     Resolution     = 0x09,
+    DirtyRect      = 0x0D,
 };
 
 #pragma pack(push, 1)
 struct FrameHeader {
     uint32_t magic;
     FrameType type;
-    uint16_t length;   // payload length, max 65535
-    uint64_t sequence;  // monotonic, for replay protection
+    uint16_t length;
+    uint64_t sequence;
 };
 #pragma pack(pop)
 
-constexpr size_t HEADER_SIZE = sizeof(FrameHeader); // 15 bytes
+constexpr size_t HEADER_SIZE = sizeof(FrameHeader);
 
-// Video payload: fragment index + resolution (embedded for reliability)
 #pragma pack(push, 1)
 struct VideoPayload {
     uint32_t fragmentIndex;
     uint16_t width;
     uint16_t height;
-    // followed by BGRA pixel data
 };
 #pragma pack(pop)
 
-// Mouse move: normalized coordinates [0.0, 1.0]
+#pragma pack(push, 1)
+struct DirtyRectPayload {
+    uint32_t fragmentIndex;
+    uint32_t totalFragments;
+    uint16_t frameWidth;
+    uint16_t frameHeight;
+    int16_t  left;
+    int16_t  top;
+    int16_t  right;
+    int16_t  bottom;
+};
+#pragma pack(pop)
+
 #pragma pack(push, 1)
 struct MouseMovePayload {
     float x;
@@ -48,15 +59,13 @@ struct MouseMovePayload {
 };
 #pragma pack(pop)
 
-// Mouse button
 #pragma pack(push, 1)
 struct MouseBtnPayload {
-    uint8_t button;   // 0=left, 1=right, 2=middle
-    uint8_t down;     // 0=up, 1=down
+    uint8_t button;
+    uint8_t down;
 };
 #pragma pack(pop)
 
-// Key event
 #pragma pack(push, 1)
 struct KeyEventPayload {
     uint16_t vkCode;
@@ -64,7 +73,6 @@ struct KeyEventPayload {
 };
 #pragma pack(pop)
 
-// Resolution change
 #pragma pack(push, 1)
 struct ResolutionPayload {
     uint32_t width;
@@ -72,12 +80,9 @@ struct ResolutionPayload {
 };
 #pragma pack(pop)
 
-// Encode a frame into wire format. Returns binary buffer.
 std::vector<uint8_t> Encode(FrameType type, uint64_t seq,
                              const void* payload, uint16_t payloadLen);
 
-// Decode a frame from wire format. Returns false if magic mismatch or truncated.
-// outPayload points into the input buffer (no copy).
 bool Decode(const uint8_t* data, size_t len,
             FrameHeader& outHeader, const uint8_t*& outPayload);
 

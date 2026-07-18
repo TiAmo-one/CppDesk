@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <dxgi1_2.h>
 #include <d3d11.h>
+#include <vector>
 
 namespace capture {
 
@@ -12,6 +13,13 @@ struct Frame {
     uint32_t height;
     uint32_t stride;    // bytes per row
     uint64_t timestamp;  // QueryPerformanceCounter value
+};
+
+struct DirtyRect {
+    int32_t left;
+    int32_t top;
+    int32_t right;
+    int32_t bottom;
 };
 
 // RAII wrapper around a captured frame
@@ -27,11 +35,15 @@ public:
     bool valid() const { return frame_.data != nullptr; }
     const Frame& frame() const { return frame_; }
     Frame& frame() { return frame_; }
+    const std::vector<DirtyRect>& dirtyRects() const { return dirtyRects_; }
+    const std::vector<DirtyRect>& moveRects() const { return moveRects_; }
 
 private:
     friend class Capture;
     Frame frame_{};
     IDXGIOutputDuplication* dup_ = nullptr;
+    std::vector<DirtyRect> dirtyRects_;
+    std::vector<DirtyRect> moveRects_;
 };
 
 class Capture {
