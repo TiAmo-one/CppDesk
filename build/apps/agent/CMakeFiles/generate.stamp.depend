@@ -1,7 +1,0 @@
-# CMake generation dependency list for this directory.
-C:/Program Files/CMake/share/cmake-4.4/Modules/FindPackageHandleStandardArgs.cmake
-C:/Program Files/CMake/share/cmake-4.4/Modules/FindPackageMessage.cmake
-C:/Users/17410/Desktop/remote control/apps/agent/CMakeLists.txt
-C:/vcpkg-build/installed/x64-windows/share/nlohmann_json/nlohmann_jsonConfig.cmake
-C:/vcpkg-build/installed/x64-windows/share/nlohmann_json/nlohmann_jsonConfigVersion.cmake
-C:/vcpkg-build/installed/x64-windows/share/nlohmann_json/nlohmann_jsonTargets.cmake
