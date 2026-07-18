@@ -22,13 +22,13 @@ std::vector<uint8_t> Controller::DecodeFrame(const uint8_t*, int) { return {}; }
 
 void Controller::NetworkThread() {
     constexpr uint32_t CHUNK = 65480;
-    auto lastFrameTime = std::chrono::steady_clock::now();
+    // lastFrameTime removed (no throttle)
 
     int pollCount = 0;
     while (running_) {
         signal_.Poll(p2pReady_ ? 0 : 100);
         if (p2pReady_) {
-            int pkts = channel_.Poll(10, [this, &lastFrameTime](proto::FrameType type, uint64_t,
+            int pkts = channel_.Poll(2, [this](proto::FrameType type, uint64_t,
                                       const uint8_t* data, uint16_t len) {
                 if (type == proto::FrameType::Video) {
                     auto* vp = (const proto::VideoPayload*)data;
@@ -72,15 +72,9 @@ void Controller::NetworkThread() {
                     }
 
                     if (reasmActive_ && reasmWritten_ >= reasmExpected_ && reasmExpected_ > 0) {
-                        auto now = std::chrono::steady_clock::now();
-                        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                            now - lastFrameTime).count();
-                        if (elapsed >= 16) {
-                            window_.UpdateFrame(reasmBuf_.data(), decWidth_, decHeight_, decWidth_ * 4);
-                            lastFrameTime = now;
-                            static int cfc = 0;
-                            if (++cfc == 1) std::cout << "CTRL: FIRST FRAME DISPLAYED" << std::endl;
-                        }
+                        window_.UpdateFrame(reasmBuf_.data(), decWidth_, decHeight_, decWidth_ * 4);
+                        static int cfc = 0;
+                        if (++cfc == 1) std::cout << "CTRL: FIRST FRAME DISPLAYED" << std::endl;
                         reasmActive_ = false;
                         reasmWritten_ = 0;
                         reasmExpected_ = 0;

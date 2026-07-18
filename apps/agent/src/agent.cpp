@@ -161,12 +161,28 @@ void Agent::MainLoop() {
         }
 
         if (!cachedFrame_.empty() && running_) {
+            bool changed = true;
             if (cachedWidth_ == prevWidth_ && cachedHeight_ == prevHeight_ &&
-                cachedFrame_.size() == prevFrame_.size() &&
-                memcmp(cachedFrame_.data(), prevFrame_.data(), cachedFrame_.size()) == 0) {
-                // unchanged
-            } else {
-                prevFrame_ = cachedFrame_;
+                cachedFrame_.size() == prevFrame_.size() && !prevFrame_.empty()) {
+                const uint8_t* cur = cachedFrame_.data();
+                const uint8_t* prv = prevFrame_.data();
+                size_t sz = cachedFrame_.size();
+                changed = false;
+                for (size_t i = 0; i < sz; i += 1024) {
+                    if (*(const uint32_t*)(cur + i) != *(const uint32_t*)(prv + i)) {
+                        changed = true;
+                        break;
+                    }
+                }
+            }
+            if (changed) {
+                if (prevFrame_.size() != (cachedFrame_.size() + 1023) / 1024 * 4)
+                    prevFrame_.resize((cachedFrame_.size() + 1023) / 1024 * 4);
+                uint32_t* fp = (uint32_t*)prevFrame_.data();
+                const uint8_t* src = cachedFrame_.data();
+                size_t sz = cachedFrame_.size();
+                for (size_t i = 0; i < sz; i += 1024)
+                    fp[i / 1024] = *(const uint32_t*)(src + i);
                 prevWidth_ = cachedWidth_;
                 prevHeight_ = cachedHeight_;
 
@@ -194,19 +210,17 @@ void Agent::MainLoop() {
                     vp->fragmentIndex = fragIdx++;
                     memcpy(sendBuf_.data() + sizeof(proto::VideoPayload), sendData + offset, chunkSize);
                     bool sent = false;
-                    for (int retry = 0; retry < 50 && !sent && running_; retry++) {
+                    for (int retry = 0; retry < 3 && !sent && running_; retry++) {
                         sent = channel_.SendFrame(proto::FrameType::Video, sendBuf_.data(),
                                                    (uint16_t)(sizeof(proto::VideoPayload) + chunkSize));
                         if (!sent) {
                             sendFails++;
-                            std::this_thread::sleep_for(std::chrono::microseconds(100));
+                            std::this_thread::yield();
                         } else {
                             sendSuccess++;
                         }
                     }
                     offset += chunkSize;
-                    if (fragIdx % 10 == 0)
-                        std::this_thread::sleep_for(std::chrono::microseconds(200));
                 }
                 std::cerr << "[AGENT] SEND done: " << sendSuccess << " ok, " << sendFails << " fails, " << fragIdx << " frags" << std::endl;
 
