@@ -123,10 +123,11 @@ std::string SignalClient::ReadFrame() {
 
 void SignalClient::Poll(int timeoutMs) {
     if (!connected_) return;
-    fd_set fds; FD_ZERO(&fds); FD_SET(sock_, &fds);
     timeval tv = { timeoutMs / 1000, (timeoutMs % 1000) * 1000 };
 
-    while (select(0, &fds, nullptr, nullptr, &tv) > 0) {
+    while (true) {
+        fd_set fds; FD_ZERO(&fds); FD_SET(sock_, &fds);
+        if (select(0, &fds, nullptr, nullptr, &tv) <= 0) break;
         std::string msg = ReadFrame();
         if (msg.empty()) break;
         if (cb_.onMessage) cb_.onMessage("", msg);
@@ -170,3 +171,4 @@ bool SignalClient::Send(const std::string& json) {
 }
 
 } // namespace network
+

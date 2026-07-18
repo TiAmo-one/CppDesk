@@ -57,10 +57,14 @@ bool HolePunch(UdpSocket& sock, const SdpInfo& remoteSdp,
 void DrainSocket(UdpSocket& sock) {
     sockaddr_in dummy = {};
     uint8_t buf[2048];
-    for (int i = 0; i < 100; i++) {
+    int drained = 0;
+    while (true) {
         int n = sock.RecvFrom(dummy, buf, sizeof(buf), 0);
         if (n <= 0) break;
+        drained++;
     }
+    if (drained > 0)
+        std::cerr << "[DRAIN] Cleared " << drained << " stale UDP packets" << std::endl;
 }
 
 bool KeyExchange(UdpSocket& sock, const sockaddr_in& peer,
@@ -109,3 +113,4 @@ bool KeyExchange(UdpSocket& sock, const sockaddr_in& peer,
 }
 
 } // namespace network
+

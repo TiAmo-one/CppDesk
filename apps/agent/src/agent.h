@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <string>
 #include <vector>
 #include <thread>
@@ -50,9 +50,10 @@ private:
     uint32_t lastWidth_ = 0, lastHeight_ = 0;
     std::vector<uint8_t> cachedFrame_;
     uint32_t cachedWidth_ = 0, cachedHeight_ = 0;
-    std::vector<uint8_t> scaledBuf_;   // pre-allocated scaled buffer
+
     std::vector<uint8_t> sendBuf_;     // pre-allocated send buffer
-    std::vector<uint8_t> prevFrame_;   // for frame differencing (unused, kept for compatibility)
-    uint64_t prevHash_ = 0;  // sparse XOR hash for delta detection
-    uint32_t prevWidth_ = 0, prevHeight_ = 0;
+
+
+
 };
+

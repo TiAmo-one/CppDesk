@@ -22,7 +22,7 @@ void Controller::NetworkThread() {
     while (running_) {
         signal_.Poll(p2pReady_ ? 0 : 100);
         if (p2pReady_) {
-            int pkts = channel_.Poll(1, [this, &lastDisplayTime](proto::FrameType type, uint64_t,
+            int pkts = channel_.Poll(2, [this, &lastDisplayTime](proto::FrameType type, uint64_t,
                                       const uint8_t* data, uint16_t len) {
 
                 if (type == proto::FrameType::DirtyRect) {
@@ -290,5 +290,6 @@ int Controller::Run() {
     if (networkThread_.joinable()) networkThread_.join();
     return ret;
 }
+
 
 
