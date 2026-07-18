@@ -48,6 +48,8 @@ private:
     ID3D11Device*           device_  = nullptr;
     ID3D11DeviceContext*    ctx_     = nullptr;
     IDXGIOutputDuplication* dup_     = nullptr;
+    ID3D11Texture2D*        staging_ = nullptr;
+    uint32_t stagingWidth_ = 0, stagingHeight_ = 0;
     uint32_t width_  = 0;
     uint32_t height_ = 0;
     bool released_ = true;

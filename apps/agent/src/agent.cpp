@@ -1,6 +1,9 @@
 #include "agent.h"
 #include <iostream>
 #include <chrono>
+#include <thread>
+#include <algorithm>
+#include <cstring>
 
 Agent::Agent(const std::string& serverHost, uint16_t serverPort,
              const std::string& roomId, const std::string& password)
@@ -10,12 +13,11 @@ Agent::Agent(const std::string& serverHost, uint16_t serverPort,
 Agent::~Agent() { running_ = false; }
 
 int Agent::Run() {
-    std::cout << "Agent starting..." << std::endl;
+    std::cerr << "[AGENT] Starting..." << std::endl;
 
-    // 1. Connect to signal server
     signal_.SetCallbacks({
         .onConnected = [this]() {
-            std::cout << "Connected to signal server" << std::endl;
+            std::cerr << "[AGENT] Connected to signal server" << std::endl;
             json reg;
             reg["type"]     = "register";
             reg["room"]     = roomId_;
@@ -29,21 +31,12 @@ int Agent::Run() {
 
                 if (type == "registered") {
                     signalRegistered_ = true;
-                    std::cout << "Room registered, waiting for controller..." << std::endl;
+                    std::cerr << "[AGENT] Registered, waiting for controller..." << std::endl;
 
                 } else if (type == "peer_connect") {
-                    std::cout << "Controller connected, starting P2P setup..." << std::endl;
-
-                    // Get STUN address
+                    std::cerr << "[AGENT] peer_connect received, sending SDP..." << std::endl;
                     sockaddr_in stunAddr = {};
-                    if (network::stun::GetMappedAddress(p2pSocket_.GetNative(), stunAddr)) {
-                        char ip[64];
-                        inet_ntop(AF_INET, &stunAddr.sin_addr, ip, sizeof(ip));
-                        std::cout << "STUN: " << ip << ":" << ntohs(stunAddr.sin_port) << std::endl;
-                    }
-
-                    auto sdp = network::BuildSdp(p2pSocket_.GetNative(), stunAddr);
-                    // Send SDP with candidates
+                    auto sdp = network::BuildSdp(p2pSocket_.GetNative(), stunAddr, p2pSocket_.GetPort());
                     json sdpMsg;
                     sdpMsg["type"] = "sdp";
                     std::string cands;
@@ -52,12 +45,13 @@ int Agent::Run() {
                         cands += c;
                     }
                     sdpMsg["data"] = cands;
+                    std::cerr << "[AGENT] SDP candidates: " << cands << std::endl;
                     signal_.Send(sdpMsg.dump());
 
                 } else if (type == "sdp") {
-                    // Parse remote candidates
                     remoteSdp_.candidates.clear();
                     std::string cands = j.value("data", "");
+                    std::cerr << "[AGENT] Received remote SDP: " << cands << std::endl;
                     size_t pos = 0;
                     while (pos < cands.size()) {
                         auto comma = cands.find(',', pos);
@@ -66,129 +60,195 @@ int Agent::Run() {
                         pos = (comma == std::string::npos) ? cands.size() : comma + 1;
                     }
 
-                    // Attempt hole punch
                     sockaddr_in peer = {};
-                    if (network::HolePunch(p2pSocket_, remoteSdp_, peer)) {
-                        std::cout << "P2P hole punch succeeded!" << std::endl;
+                    if (!remoteSdp_.candidates.empty()) {
+                        auto& c = remoteSdp_.candidates[0];
+                        auto colon = c.find(":");
+                        if (colon != std::string::npos) {
+                            std::string ip = c.substr(0, colon);
+                            uint16_t port = (uint16_t)std::stoi(c.substr(colon + 1));
+                            peer.sin_family = AF_INET;
+                            peer.sin_port = htons(port);
+                            inet_pton(AF_INET, ip.c_str(), &peer.sin_addr);
+                        }
+                    }
+                    if (peer.sin_port != 0) {
+                        std::cerr << "[AGENT] Direct connect to " << remoteSdp_.candidates[0] << std::endl;
                         peerAddr_ = peer;
 
-                        // ECDH key exchange
                         uint8_t key[16];
+                        std::cerr << "[AGENT] Starting KeyExchange..." << std::endl;
                         if (network::KeyExchange(p2pSocket_, peer, key)) {
                             channel_.Init(p2pSocket_.GetNative(), peer);
                             channel_.SetKey(key);
                             p2pReady_ = true;
-
                             json done;
                             done["type"] = "p2p_established";
                             signal_.Send(done.dump());
-
-                            std::cout << "P2P ready, starting capture..." << std::endl;
+                            std::cerr << "[AGENT] P2P ready!" << std::endl;
+                        } else {
+                            std::cerr << "[AGENT] KeyExchange FAILED!" << std::endl;
                         }
                     } else {
-                        std::cerr << "Hole punch failed" << std::endl;
-                        json fail;
-                        fail["type"] = "p2p_failed";
-                        signal_.Send(fail.dump());
+                        std::cerr << "[AGENT] Failed to parse remote address" << std::endl;
                     }
 
                 } else if (type == "peer_disconnect") {
-                    std::cout << "Controller disconnected" << std::endl;
+                    std::cerr << "[AGENT] Controller disconnected" << std::endl;
                     p2pReady_ = false;
                 }
-            } catch (...) {}
+            } catch (...) { std::cerr << "[AGENT] Exception in onMessage" << std::endl; }
         },
         .onError = [](const std::string& err) {
-            std::cerr << "Signal error: " << err << std::endl;
+            std::cerr << "[AGENT] Signal error: " << err << std::endl;
         }
     });
 
+    std::cerr << "[AGENT] Creating P2P socket..." << std::endl;
     if (!p2pSocket_.Create(0)) {
-        std::cerr << "Failed to create P2P socket" << std::endl;
+        std::cerr << "[AGENT] Failed to create P2P socket" << std::endl;
         return 1;
     }
+    std::cerr << "[AGENT] P2P socket on port " << p2pSocket_.GetPort() << std::endl;
 
+    std::cerr << "[AGENT] Connecting to signal server " << serverHost_ << ":" << serverPort_ << "..." << std::endl;
     if (!signal_.Connect(serverHost_.c_str(), serverPort_)) {
-        std::cerr << "Failed to connect to signal server " << serverHost_ << ":" << serverPort_ << std::endl;
+        std::cerr << "[AGENT] Failed to connect to signal server" << std::endl;
         return 1;
     }
 
-    // 2. Wait for P2P setup via signal polling
-    std::cout << "Waiting for P2P setup..." << std::endl;
+    std::cerr << "[AGENT] Waiting for P2P..." << std::endl;
     while (running_ && !p2pReady_) {
         signal_.Poll(100);
     }
-    if (!p2pReady_) return 1;
+    if (!p2pReady_) { std::cerr << "[AGENT] P2P not ready, exiting" << std::endl; return 1; }
 
-    // 3. Init capture + encoder
+    std::cerr << "[AGENT] Initializing capture..." << std::endl;
     if (!capture_.Init(0)) {
-        std::cerr << "Failed to init capture" << std::endl;
+        std::cerr << "[AGENT] Failed to init capture" << std::endl;
         return 1;
     }
     uint32_t w, h;
     capture_.GetCurrentResolution(w, h);
-    std::cout << "Capture: " << w << "x" << h << std::endl;
+    std::cerr << "[AGENT] Capture: " << w << "x" << h << std::endl;
 
-    // encoder skipped (x264 not built)
-
-    // 4. Main loop
-    std::cout << "Agent running. Press Ctrl+C to stop." << std::endl;
+    std::cerr << "[AGENT] Entering MainLoop..." << std::endl;
     MainLoop();
 
     return 0;
 }
 
 void Agent::MainLoop() {
+    constexpr uint16_t MAX_CHUNK = 65480;
+    sendBuf_.resize(sizeof(proto::VideoPayload) + MAX_CHUNK);
+    std::cerr << "[AGENT] MainLoop started" << std::endl;
+
+    int loopCount = 0;
     while (running_) {
-        // Capture + Encode + Send
-        auto frame = capture_.AcquireFrame(16);
+        loopCount++;
+        auto frame = capture_.AcquireFrame(8);
         if (frame.valid()) {
             auto& f = frame.frame();
-        // Encode disabled (x264 not built)
+            uint32_t rowBytes = f.width * 4;
+            if (cachedFrame_.size() != rowBytes * f.height)
+                cachedFrame_.resize(rowBytes * f.height);
+            for (uint32_t row = 0; row < f.height; row++)
+                memcpy(cachedFrame_.data() + row * rowBytes, f.data + row * f.stride, rowBytes);
+            cachedWidth_ = f.width;
+            cachedHeight_ = f.height;
+            if (loopCount == 1)
+                std::cerr << "[AGENT] First frame captured: " << cachedWidth_ << "x" << cachedHeight_ << std::endl;
         }
 
-        // Process incoming input frames
+        if (!cachedFrame_.empty() && running_) {
+            if (cachedWidth_ == prevWidth_ && cachedHeight_ == prevHeight_ &&
+                cachedFrame_.size() == prevFrame_.size() &&
+                memcmp(cachedFrame_.data(), prevFrame_.data(), cachedFrame_.size()) == 0) {
+                // unchanged
+            } else {
+                prevFrame_ = cachedFrame_;
+                prevWidth_ = cachedWidth_;
+                prevHeight_ = cachedHeight_;
+
+                uint32_t dstW = cachedWidth_, dstH = cachedHeight_;
+                if (dstW != lastWidth_ || dstH != lastHeight_) {
+                    proto::ResolutionPayload res = {dstW, dstH};
+                    channel_.SendFrame(proto::FrameType::Resolution, &res, sizeof(res));
+                    lastWidth_ = dstW; lastHeight_ = dstH;
+                }
+
+                const uint8_t* sendData = cachedFrame_.data();
+                uint32_t sendSize = cachedWidth_ * cachedHeight_ * 4;
+
+                auto* vp = (proto::VideoPayload*)sendBuf_.data();
+                vp->width = (uint16_t)dstW;
+                vp->height = (uint16_t)dstH;
+                uint32_t offset = 0;
+                uint32_t fragIdx = 0;
+                int sendFails = 0;
+                int sendSuccess = 0;
+                std::cerr << "[AGENT] SEND: " << sendSize << " bytes, ~" << ((sendSize+MAX_CHUNK-1)/MAX_CHUNK) << " frags" << std::endl;
+
+                while (offset < sendSize && running_) {
+                    uint16_t chunkSize = (uint16_t)(std::min)((uint32_t)MAX_CHUNK, sendSize - offset);
+                    vp->fragmentIndex = fragIdx++;
+                    memcpy(sendBuf_.data() + sizeof(proto::VideoPayload), sendData + offset, chunkSize);
+                    bool sent = false;
+                    for (int retry = 0; retry < 50 && !sent && running_; retry++) {
+                        sent = channel_.SendFrame(proto::FrameType::Video, sendBuf_.data(),
+                                                   (uint16_t)(sizeof(proto::VideoPayload) + chunkSize));
+                        if (!sent) {
+                            sendFails++;
+                            std::this_thread::sleep_for(std::chrono::microseconds(100));
+                        } else {
+                            sendSuccess++;
+                        }
+                    }
+                    offset += chunkSize;
+                    if (fragIdx % 10 == 0)
+                        std::this_thread::sleep_for(std::chrono::microseconds(200));
+                }
+                std::cerr << "[AGENT] SEND done: " << sendSuccess << " ok, " << sendFails << " fails, " << fragIdx << " frags" << std::endl;
+
+                static int frameCount = 0;
+                ++frameCount;
+                if (frameCount == 1)
+                    std::cerr << "[AGENT] Frame " << frameCount << " sent: " << sendSuccess << " ok, " << sendFails << " retries, " << fragIdx << " frags" << std::endl;
+                else if (frameCount % 30 == 0)
+                    std::cerr << "[AGENT] Frame " << frameCount << " sent" << std::endl;
+            }
+        } else {
+            if (loopCount <= 3)
+                std::cerr << "[AGENT] Loop " << loopCount << ": cachedFrame empty or not running" << std::endl;
+            std::this_thread::sleep_for(std::chrono::microseconds(500));
+        }
+
+        // Process incoming input
         channel_.Poll(0, [this](proto::FrameType type, uint64_t,
                                  const uint8_t* data, uint16_t len) {
             switch (type) {
             case proto::FrameType::MouseMove:
-                if (len >= sizeof(proto::MouseMovePayload)) {
+                if (serverHost_ != "127.0.0.1" && len >= sizeof(proto::MouseMovePayload)) {
                     auto* m = (const proto::MouseMovePayload*)data;
                     input::MoveMouse(m->x, m->y);
                 }
                 break;
             case proto::FrameType::MouseBtn:
-                if (len >= sizeof(proto::MouseBtnPayload)) {
+                if (serverHost_ != "127.0.0.1" && len >= sizeof(proto::MouseBtnPayload)) {
                     auto* b = (const proto::MouseBtnPayload*)data;
                     input::MouseButtonEvent((input::MouseButton)b->button, b->down != 0);
                 }
                 break;
             case proto::FrameType::KeyEvent:
-                if (len >= sizeof(proto::KeyEventPayload)) {
+                if (serverHost_ != "127.0.0.1" && len >= sizeof(proto::KeyEventPayload)) {
                     auto* k = (const proto::KeyEventPayload*)data;
                     input::KeyEvent(k->vkCode, k->down != 0);
                 }
-                break;
-            case proto::FrameType::ClipboardText: {
-                std::string utf8((const char*)data, len);
-                int wlen = MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), -1, nullptr, 0);
-                if (wlen > 0) {
-                    std::wstring wstr(wlen, 0);
-                    MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), -1, &wstr[0], wlen);
-                    clipboard::ClipboardData cb;
-                    cb.text = wstr; cb.hasText = true;
-                    clipboard::Monitor::Write(cb);
-                }
-                break;
-            }
-            case proto::FrameType::FileBlock:
-                // File block handling would go here
                 break;
             default: break;
             }
         });
 
-        // Clipboard monitoring
         clipboard::ClipboardData cbData;
         if (clipboard_.Check(cbData)) {
             if (cbData.hasText) {
@@ -199,10 +259,9 @@ void Agent::MainLoop() {
                     channel_.SendFrame(proto::FrameType::ClipboardText, utf8.data(), (uint16_t)utf8.size());
                 }
             }
-            // File clipboard handling would go here
         }
 
-        // Signal keepalive
         signal_.Poll(0);
     }
+    std::cerr << "[AGENT] MainLoop exited" << std::endl;
 }

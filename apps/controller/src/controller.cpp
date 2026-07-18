@@ -2,8 +2,6 @@
 #include <iostream>
 #include <chrono>
 #include "libinput.h"
-#include "libinput.h"
-#include <chrono>
 
 Controller::Controller(HINSTANCE hInst, const std::string& serverHost,
                        uint16_t serverPort, const std::string& roomId,
@@ -19,93 +17,94 @@ Controller::~Controller() {
     if (swsCtx_)   sws_freeContext(swsCtx_);
 }
 
-bool Controller::InitDecoder(int width, int height) {
-    if (width == decWidth_ && height == decHeight_ && codecCtx_) return true;
-    if (codecCtx_) { avcodec_free_context(&codecCtx_); av_frame_free(&decFrame_); sws_freeContext(swsCtx_); }
-
-    const AVCodec* codec = avcodec_find_decoder(AV_CODEC_ID_H264);
-    if (!codec) return false;
-
-    codecCtx_ = avcodec_alloc_context3(codec);
-    codecCtx_->width   = width;
-    codecCtx_->height  = height;
-    codecCtx_->pix_fmt = AV_PIX_FMT_YUV420P;
-
-    if (avcodec_open2(codecCtx_, codec, nullptr) < 0) return false;
-
-    decFrame_ = av_frame_alloc();
-    decWidth_ = width; decHeight_ = height;
-
-    swsCtx_ = sws_getContext(width, height, AV_PIX_FMT_YUV420P,
-                              width, height, AV_PIX_FMT_BGRA,
-                              SWS_BILINEAR, nullptr, nullptr, nullptr);
-    return true;
-}
-
-std::vector<uint8_t> Controller::DecodeFrame(const uint8_t* data, int len) {
-    std::vector<uint8_t> bgra;
-    if (!codecCtx_) return bgra;
-
-    AVPacket* pkt = av_packet_alloc();
-    pkt->data = (uint8_t*)data; pkt->size = len;
-
-    if (avcodec_send_packet(codecCtx_, pkt) < 0) { av_packet_free(&pkt); return bgra; }
-    if (avcodec_receive_frame(codecCtx_, decFrame_) < 0) { av_packet_free(&pkt); return bgra; }
-
-    bgra.resize(decWidth_ * decHeight_ * 4);
-    uint8_t* dst[1] = { bgra.data() };
-    int dstStride[1] = { decWidth_ * 4 };
-    sws_scale(swsCtx_, decFrame_->data, decFrame_->linesize, 0,
-              decHeight_, dst, dstStride);
-
-    av_packet_free(&pkt);
-    return bgra;
-}
+bool Controller::InitDecoder(int, int) { return false; }
+std::vector<uint8_t> Controller::DecodeFrame(const uint8_t*, int) { return {}; }
 
 void Controller::NetworkThread() {
+    constexpr uint32_t CHUNK = 65480;
+    auto lastFrameTime = std::chrono::steady_clock::now();
+
+    int pollCount = 0;
     while (running_) {
-        signal_.Poll(100);
+        signal_.Poll(p2pReady_ ? 0 : 100);
         if (p2pReady_) {
-            channel_.Poll(50, [this](proto::FrameType type, uint64_t,
+            int pkts = channel_.Poll(10, [this, &lastFrameTime](proto::FrameType type, uint64_t,
                                       const uint8_t* data, uint16_t len) {
                 if (type == proto::FrameType::Video) {
                     auto* vp = (const proto::VideoPayload*)data;
-                    const uint8_t* nalData = data + sizeof(proto::VideoPayload);
-                    int nalLen = len - (int)sizeof(proto::VideoPayload);
+                    const uint8_t* rawData = data + sizeof(proto::VideoPayload);
+                    int rawLen = len - (int)sizeof(proto::VideoPayload);
 
-                    if (!codecCtx_) InitDecoder(decWidth_ ? decWidth_ : 1920, decHeight_ ? decHeight_ : 1080);
-                    auto bgra = DecodeFrame(nalData, nalLen);
-                    if (!bgra.empty())
-                        window_.UpdateFrame(bgra.data(), decWidth_, decHeight_, decWidth_ * 4);
-
-                } else if (type == proto::FrameType::ClipboardText) {
-                    std::string utf8((const char*)data, len);
-                    int wlen = MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), -1, nullptr, 0);
-                    if (wlen > 0) {
-                        std::wstring wstr(wlen, 0);
-                        MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), -1, &wstr[0], wlen);
-                        clipboard::ClipboardData cb;
-                        cb.text = wstr; cb.hasText = true;
-                        clipboard::Monitor::Write(cb);
+                    uint16_t vpWidth = vp->width;
+                    uint16_t vpHeight = vp->height;
+                    if (vpWidth > 0 && vpHeight > 0 &&
+                        (vpWidth != (uint16_t)decWidth_ || vpHeight != (uint16_t)decHeight_)) {
+                        std::cout << "CTRL: resolution " << vpWidth << "x" << vpHeight << std::endl;
+                        decWidth_ = vpWidth;
+                        decHeight_ = vpHeight;
+                        resolutionChanged_ = true;
                     }
-                } else if (type == proto::FrameType::FileBlock) {
-                    // File receive would go here
+
+                    if (resolutionChanged_) {
+                        reasmActive_ = false;
+                        reasmWritten_ = 0;
+                        reasmExpected_ = 0;
+                        resolutionChanged_ = false;
+                    }
+
+                    if (vp->fragmentIndex == 0 && decWidth_ > 0 && decHeight_ > 0) {
+                        reasmExpected_ = decWidth_ * decHeight_ * 4;
+                        if (reasmBuf_.size() != reasmExpected_)
+                            reasmBuf_.resize(reasmExpected_);
+                        reasmWritten_ = 0;
+                        reasmActive_ = true;
+                    }
+
+                    if (reasmActive_ && reasmExpected_ > 0) {
+                        uint32_t offset = vp->fragmentIndex * CHUNK;
+                        if (offset < reasmExpected_) {
+                            uint32_t copyLen = (std::min)((uint32_t)rawLen, reasmExpected_ - offset);
+                            if (offset + copyLen <= reasmBuf_.size()) {
+                                memcpy(reasmBuf_.data() + offset, rawData, copyLen);
+                                reasmWritten_ += copyLen;
+                            }
+                        }
+                    }
+
+                    if (reasmActive_ && reasmWritten_ >= reasmExpected_ && reasmExpected_ > 0) {
+                        auto now = std::chrono::steady_clock::now();
+                        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            now - lastFrameTime).count();
+                        if (elapsed >= 16) {
+                            window_.UpdateFrame(reasmBuf_.data(), decWidth_, decHeight_, decWidth_ * 4);
+                            lastFrameTime = now;
+                            static int cfc = 0;
+                            if (++cfc == 1) std::cout << "CTRL: FIRST FRAME DISPLAYED" << std::endl;
+                        }
+                        reasmActive_ = false;
+                        reasmWritten_ = 0;
+                        reasmExpected_ = 0;
+                    }
                 }
             });
+
+            pollCount++;
+            if (pollCount == 1)
+                std::cout << "CTRL: first poll, " << pkts << " pkts" << std::endl;
+            else if (pollCount % 60 == 0)
+                std::cout << "CTRL: poll " << pollCount << ", " << pkts << " pkts" << std::endl;
         }
     }
 }
 
 int Controller::Run() {
-    std::cout << "Controller starting..." << std::endl;
+    std::cout << "CTRL: starting" << std::endl;
 
-    // Create window
     if (!window_.Create(hInst_, L"Remote Desktop", 1280, 720)) {
-        std::cerr << "Failed to create window" << std::endl;
+        std::cerr << "CTRL: window failed" << std::endl;
         return 1;
     }
 
-    // Input callbacks
     ui::UiCallbacks uiCb;
     uiCb.onMouseMove = [this](float x, float y) {
         if (!p2pReady_) return;
@@ -126,17 +125,12 @@ int Controller::Run() {
         proto::KeyEventPayload k = {vk, (uint8_t)(down ? 1 : 0)};
         channel_.SendFrame(proto::FrameType::KeyEvent, &k, sizeof(k));
     };
-    uiCb.onFileDrop = [this](const wchar_t* path) {
-        if (!p2pReady_) return;
-        // File transfer would be triggered here
-    };
     uiCb.onClose = [this]() { running_ = false; };
     window_.SetCallbacks(uiCb);
 
-    // Connect signal
     signal_.SetCallbacks({
         .onConnected = [this]() {
-            std::cout << "Connected to signal server" << std::endl;
+            std::cout << "CTRL: signal connected" << std::endl;
             json join;
             join["type"]     = "join";
             join["room"]     = roomId_;
@@ -149,11 +143,11 @@ int Controller::Run() {
                 std::string type = j.value("type", "");
 
                 if (type == "joined") {
-                    std::cout << "Joined room, waiting for P2P..." << std::endl;
+                    std::cout << "CTRL: joined" << std::endl;
                 } else if (type == "peer_connect") {
+                    std::cout << "CTRL: peer_connect, sending SDP" << std::endl;
                     sockaddr_in stunAddr = {};
-                    network::stun::GetMappedAddress(p2pSocket_.GetNative(), stunAddr);
-                    auto sdp = network::BuildSdp(p2pSocket_.GetNative(), stunAddr);
+                    auto sdp = network::BuildSdp(p2pSocket_.GetNative(), stunAddr, p2pSocket_.GetPort());
                     json sdpMsg;
                     sdpMsg["type"] = "sdp";
                     std::string cands;
@@ -174,32 +168,50 @@ int Controller::Run() {
                         pos = (comma == std::string::npos) ? cands.size() : comma + 1;
                     }
                     sockaddr_in peer = {};
-                    if (network::HolePunch(p2pSocket_, remoteSdp, peer)) {
-                        std::cout << "P2P hole punch succeeded!" << std::endl;
+                    if (!remoteSdp.candidates.empty()) {
+                        auto& c = remoteSdp.candidates[0];
+                        auto colon = c.find(":");
+                        if (colon != std::string::npos) {
+                            std::string ip = c.substr(0, colon);
+                            uint16_t port = (uint16_t)std::stoi(c.substr(colon + 1));
+                            peer.sin_family = AF_INET;
+                            peer.sin_port = htons(port);
+                            inet_pton(AF_INET, ip.c_str(), &peer.sin_addr);
+                        }
+                    }
+                    if (peer.sin_port != 0) {
+                        std::cout << "CTRL: connect to " << remoteSdp.candidates[0] << std::endl;
                         peerAddr_ = peer;
                         uint8_t key[16];
+                        std::cout << "CTRL: KeyExchange..." << std::endl;
                         if (network::KeyExchange(p2pSocket_, peer, key)) {
                             channel_.Init(p2pSocket_.GetNative(), peer);
                             channel_.SetKey(key);
                             p2pReady_ = true;
                             json done; done["type"] = "p2p_established";
                             signal_.Send(done.dump());
-                            std::cout << "P2P ready, starting stream..." << std::endl;
+                            std::cout << "CTRL: P2P ready" << std::endl;
+                        } else {
+                            std::cout << "CTRL: KeyExchange FAILED" << std::endl;
                         }
+                    } else {
+                        std::cout << "CTRL: bad peer addr" << std::endl;
                     }
                 } else if (type == "p2p_established") {
                     p2pReady_ = true;
-                } else if (type == "error") {
-                    std::cerr << "Server error: " << j.value("message", "") << std::endl;
                 }
             } catch (...) {}
         },
-        .onError = [](const std::string& err) { std::cerr << "Signal error: " << err << std::endl; }
+        .onError = [](const std::string& err) { std::cerr << "CTRL: sig err " << err << std::endl; }
     });
 
-    if (!p2pSocket_.Create(0)) { std::cerr << "Failed to create P2P socket" << std::endl; return 1; }
+    std::cout << "CTRL: creating P2P socket" << std::endl;
+    if (!p2pSocket_.Create(0)) { std::cerr << "CTRL: socket fail" << std::endl; return 1; }
+    std::cout << "CTRL: P2P port " << p2pSocket_.GetPort() << std::endl;
+
+    std::cout << "CTRL: connecting signal " << serverHost_ << ":" << serverPort_ << std::endl;
     if (!signal_.Connect(serverHost_.c_str(), serverPort_)) {
-        std::cerr << "Failed to connect to signal server" << std::endl;
+        std::cerr << "CTRL: signal connect fail" << std::endl;
         return 1;
     }
 

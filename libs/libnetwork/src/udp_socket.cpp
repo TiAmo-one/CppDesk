@@ -15,15 +15,13 @@ UdpSocket::~UdpSocket() { Close(); }
 bool UdpSocket::Create(uint16_t port) {
     sock_ = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sock_ == INVALID_SOCKET) return false;
-    if (port > 0) {
-        sockaddr_in addr = {};
-        addr.sin_family = AF_INET;
-        addr.sin_port = htons(port);
-        addr.sin_addr.s_addr = INADDR_ANY;
-        if (bind(sock_, (sockaddr*)&addr, sizeof(addr)) != 0) {
-            Close();
-            return false;
-        }
+    sockaddr_in addr = {};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    addr.sin_addr.s_addr = INADDR_ANY;
+    if (bind(sock_, (sockaddr*)&addr, sizeof(addr)) != 0) {
+        Close();
+        return false;
     }
     u_long mode = 1;
     ioctlsocket(sock_, FIONBIO, &mode);

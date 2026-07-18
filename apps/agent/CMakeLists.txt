@@ -14,3 +14,10 @@ target_link_libraries(agent PRIVATE
     libcapture libnetwork libinput libclipboard libfiletransfer libproto
     nlohmann_json::nlohmann_json libsodium
 )
+# Auto-copy runtime DLLs to output
+add_custom_command(TARGET agent POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "C:/vcpkg-build/installed/x64-windows/bin/libsodium.dll"
+        $<TARGET_FILE_DIR:agent>
+    COMMENT "Copying libsodium.dll to agent output"
+)

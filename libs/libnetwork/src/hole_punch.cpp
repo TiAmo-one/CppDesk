@@ -1,36 +1,29 @@
-#include "libnetwork/hole_punch.h"
+﻿#include "libnetwork/hole_punch.h"
 #include <ws2tcpip.h>
 #include <sodium.h>
 #include <chrono>
 #include <thread>
+#include <iostream>
 
 namespace network {
 
-SdpInfo BuildSdp(SOCKET sock, const sockaddr_in& stunAddr) {
+SdpInfo BuildSdp(SOCKET sock, const sockaddr_in& stunAddr, uint16_t localPort) {
     SdpInfo sdp;
-    char ip[64];
-    inet_ntop(AF_INET, &stunAddr.sin_addr, ip, sizeof(ip));
-    sdp.candidates.push_back(
-        std::string(ip) + ":" + std::to_string(ntohs(stunAddr.sin_port)));
+    // Always prioritize localhost
+    sdp.candidates.push_back("127.0.0.1:" + std::to_string(localPort));
 
-    char hostname[256];
-    if (gethostname(hostname, sizeof(hostname)) == 0) {
-        hostent* he = gethostbyname(hostname);
-        if (he) {
-            for (int i = 0; he->h_addr_list[i]; i++) {
-                in_addr addr;
-                memcpy(&addr, he->h_addr_list[i], sizeof(addr));
-                inet_ntop(AF_INET, &addr, ip, sizeof(ip));
-                sdp.candidates.push_back(std::string(ip) + ":" +
-                    std::to_string(UdpSocket{}.GetPort()));
-            }
-        }
+    if (stunAddr.sin_addr.s_addr != 0) {
+        char ip[64];
+        inet_ntop(AF_INET, &stunAddr.sin_addr, ip, sizeof(ip));
+        sdp.candidates.push_back(
+            std::string(ip) + ":" + std::to_string(ntohs(stunAddr.sin_port)));
     }
     return sdp;
 }
 
 bool HolePunch(UdpSocket& sock, const SdpInfo& remoteSdp,
                sockaddr_in& outPeerAddr) {
+    // Parse remote candidates
     std::vector<sockaddr_in> candidates;
     for (auto& c : remoteSdp.candidates) {
         auto colon = c.find(':');
@@ -44,23 +37,33 @@ bool HolePunch(UdpSocket& sock, const SdpInfo& remoteSdp,
         inet_pton(AF_INET, ip.c_str(), &addr.sin_addr);
         candidates.push_back(addr);
     }
+
     if (candidates.empty()) return false;
 
-    uint8_t punchMsg[] = {0x50, 0x55, 0x4E, 0x43, 0x48}; // "PUNCH"
-    for (int burst = 0; burst < 10; burst++) {
+    const uint8_t punchMsg[] = {0x50, 0x55, 0x4E, 0x43, 0x48}; // "PUNCH"
+    std::cout << "Hole punching to " << candidates.size() << " candidate(s)..." << std::endl;
+
+    // Parallel: send continuously while also listening
+    for (int burst = 0; burst < 60; burst++) {
+        // Send punch to all candidates
         for (auto& addr : candidates) {
             sock.SendTo(addr, punchMsg, sizeof(punchMsg));
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
-        sockaddr_in from = {};
-        uint8_t buf[256];
-        int n = sock.RecvFrom(from, buf, sizeof(buf), 10);
-        if (n > 0 && memcmp(buf, punchMsg, sizeof(punchMsg)) == 0) {
-            outPeerAddr = from;
-            return true;
+        // Check for response immediately
+        for (int retry = 0; retry < 3; retry++) {
+            sockaddr_in from = {};
+            uint8_t buf[256];
+            int n = sock.RecvFrom(from, buf, sizeof(buf), 5);
+            if (n == sizeof(punchMsg) && memcmp(buf, punchMsg, sizeof(punchMsg)) == 0) {
+                outPeerAddr = from;
+                return true;
+            }
         }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
+
     return false;
 }
 

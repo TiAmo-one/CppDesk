@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include <string>
+#include <vector>
 #include <thread>
 #include <atomic>
 #include "libnetwork.h"
@@ -52,6 +53,13 @@ private:
     SwsContext*     swsCtx_   = nullptr;
     AVFrame*        decFrame_ = nullptr;
     int decWidth_ = 0, decHeight_ = 0;
+
+    // Frame reassembly
+    std::vector<uint8_t> reasmBuf_;
+    uint32_t reasmWritten_ = 0;
+    uint32_t reasmExpected_ = 0;
+    bool     reasmActive_ = false;
+    bool     resolutionChanged_ = false;
 
     filetransfer::FileSender   fileSender_;
     filetransfer::FileReceiver fileReceiver_;

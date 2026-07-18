@@ -30,11 +30,13 @@ struct FrameHeader {
 
 constexpr size_t HEADER_SIZE = sizeof(FrameHeader); // 15 bytes
 
-// Video payload: first 4 bytes = fragment index (for large frames)
+// Video payload: fragment index + resolution (embedded for reliability)
 #pragma pack(push, 1)
 struct VideoPayload {
     uint32_t fragmentIndex;
-    // followed by H.264 NAL data
+    uint16_t width;
+    uint16_t height;
+    // followed by BGRA pixel data
 };
 #pragma pack(pop)
 

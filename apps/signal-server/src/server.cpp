@@ -242,6 +242,7 @@ void SignalServer::HandleMessage(SOCKET sock, const std::string& msg) {
             client->role = "controller";
             client->roomId = roomId;
             SendJson(sock, {{"type", "joined"}});
+            SendJson(sock, {{"type", "peer_connect"}});
             SendJson(room->agentSock, {{"type", "peer_connect"}});
             std::cout << "Controller joined: " << roomId << std::endl;
 

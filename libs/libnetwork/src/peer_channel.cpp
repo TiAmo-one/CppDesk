@@ -1,11 +1,21 @@
 ﻿#include "libnetwork/peer_channel.h"
 #include <cstring>
+#include <ws2tcpip.h>
+#include <chrono>
+#include <thread>
+#include <iostream>
 
 namespace network {
 
 bool PeerChannel::Init(SOCKET sock, const sockaddr_in& peer) {
     sock_ = sock;
     peer_ = peer;
+    int bufSize = 16 * 1024 * 1024;
+    setsockopt(sock_, SOL_SOCKET, SO_RCVBUF, (const char*)&bufSize, sizeof(bufSize));
+    setsockopt(sock_, SOL_SOCKET, SO_SNDBUF, (const char*)&bufSize, sizeof(bufSize));
+    // Ensure non-blocking
+    u_long mode = 1;
+    ioctlsocket(sock_, FIONBIO, &mode);
     return true;
 }
 
@@ -19,34 +29,51 @@ bool PeerChannel::SendFrame(proto::FrameType type, const void* payload, uint16_t
     // AES-GCM encrypt would go here if hasKey_
     int sent = sendto(sock_, (const char*)wire.data(), (int)wire.size(), 0,
                       (const sockaddr*)&peer_, sizeof(peer_));
+    if (sent != (int)wire.size()) {
+        static int failCount = 0;
+        if (++failCount <= 3) {
+            int err = WSAGetLastError();
+            std::cerr << "[CHAN] sendto FAIL: sent=" << sent << " expected=" << wire.size() << " err=" << err << std::endl;
+        }
+    }
     return sent == (int)wire.size();
 }
 
 int PeerChannel::Poll(int timeoutMs, FrameCallback cb) {
-    fd_set fds;
-    FD_ZERO(&fds);
-    FD_SET(sock_, &fds);
-    timeval tv = { timeoutMs / 1000, (timeoutMs % 1000) * 1000 };
-    int sel = select(0, &fds, nullptr, nullptr, &tv);
-    if (sel <= 0) return 0;
-
+    int count = 0;
     uint8_t buf[65535];
-    sockaddr_in from = {};
-    int fromLen = sizeof(from);
-    int n = recvfrom(sock_, (char*)buf, sizeof(buf), 0,
-                     (sockaddr*)&from, &fromLen);
-    if (n <= 0) return 0;
+    auto start = std::chrono::steady_clock::now();
 
-    proto::FrameHeader hdr;
-    const uint8_t* pPayload = nullptr;
-    if (!proto::Decode(buf, n, hdr, pPayload)) return 0;
 
-    // Replay check
-    if (hdr.sequence <= remoteSeq_) return 0;
-    remoteSeq_ = hdr.sequence;
+    while (true) {
+        sockaddr_in from = {};
+        int fromLen = sizeof(from);
+        int n = recvfrom(sock_, (char*)buf, sizeof(buf), 0,
+                         (sockaddr*)&from, &fromLen);
+        if (n <= 0) {
+            if (WSAGetLastError() != WSAEWOULDBLOCK) break;
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - start).count();
+            if (elapsed >= timeoutMs) break;
+            std::this_thread::yield();
+            continue;
+        }
 
-    if (cb) cb(hdr.type, hdr.sequence, pPayload, hdr.length);
-    return 1;
+        proto::FrameHeader hdr;
+        const uint8_t* pPayload = nullptr;
+        if (!proto::Decode(buf, n, hdr, pPayload)) continue;
+
+        // Replay check: only reject if we have a valid previous seq
+        if (hasRemoteSeq_ && hdr.sequence <= remoteSeq_) continue;
+        remoteSeq_ = hdr.sequence;
+        hasRemoteSeq_ = true;
+
+        count++;
+        if (cb) cb(hdr.type, hdr.sequence, pPayload, hdr.length);
+        start = std::chrono::steady_clock::now();
+    }
+    return count;
 }
+
 
 } // namespace network

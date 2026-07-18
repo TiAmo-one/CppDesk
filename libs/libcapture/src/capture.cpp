@@ -35,9 +35,10 @@ FrameGuard& FrameGuard::operator=(FrameGuard&& other) noexcept {
 Capture::Capture() = default;
 
 Capture::~Capture() {
-    if (dup_)    dup_->Release();
-    if (ctx_)    ctx_->Release();
-    if (device_) device_->Release();
+    if (staging_) staging_->Release();
+    if (dup_)     dup_->Release();
+    if (ctx_)     ctx_->Release();
+    if (device_)  device_->Release();
 }
 
 bool Capture::Init(int monitorIndex) {
@@ -79,6 +80,8 @@ bool Capture::Init(int monitorIndex) {
     dup_->GetDesc(&desc);
     width_  = desc.ModeDesc.Width;
     height_ = desc.ModeDesc.Height;
+    staging_ = nullptr;
+    stagingWidth_ = 0; stagingHeight_ = 0;
     released_ = true;
     return true;
 }
@@ -100,28 +103,37 @@ FrameGuard Capture::AcquireFrame(int timeoutMs) {
     D3D11_TEXTURE2D_DESC texDesc;
     tex->GetDesc(&texDesc);
 
-    // Create staging texture for CPU readback
-    D3D11_TEXTURE2D_DESC stagingDesc = texDesc;
-    stagingDesc.Usage          = D3D11_USAGE_STAGING;
-    stagingDesc.BindFlags      = 0;
-    stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-    stagingDesc.MiscFlags      = 0;
-
-    ID3D11Texture2D* staging = nullptr;
-    hr = device_->CreateTexture2D(&stagingDesc, nullptr, &staging);
-    if (FAILED(hr)) {
-        tex->Release();
-        dup_->ReleaseFrame();
-        return guard;
+    // Reuse or create staging texture for CPU readback
+    if (!staging_ || stagingWidth_ != texDesc.Width || stagingHeight_ != texDesc.Height) {
+        if (staging_) {
+            ctx_->Unmap(staging_, 0);
+            staging_->Release();
+            staging_ = nullptr;
+        }
+        D3D11_TEXTURE2D_DESC stagingDesc = texDesc;
+        stagingDesc.Usage          = D3D11_USAGE_STAGING;
+        stagingDesc.BindFlags      = 0;
+        stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+        stagingDesc.MiscFlags      = 0;
+        hr = device_->CreateTexture2D(&stagingDesc, nullptr, &staging_);
+        if (FAILED(hr)) {
+            tex->Release();
+            dup_->ReleaseFrame();
+            return guard;
+        }
+        stagingWidth_ = texDesc.Width;
+        stagingHeight_ = texDesc.Height;
     }
 
-    ctx_->CopyResource(staging, tex);
+    // Unmap previous mapping before re-copying
+    ctx_->Unmap(staging_, 0);
+
+    ctx_->CopyResource(staging_, tex);
     tex->Release();
 
     D3D11_MAPPED_SUBRESOURCE mapped;
-    hr = ctx_->Map(staging, 0, D3D11_MAP_READ, 0, &mapped);
+    hr = ctx_->Map(staging_, 0, D3D11_MAP_READ, 0, &mapped);
     if (FAILED(hr)) {
-        staging->Release();
         dup_->ReleaseFrame();
         return guard;
     }
@@ -133,10 +145,6 @@ FrameGuard Capture::AcquireFrame(int timeoutMs) {
     guard.frame_.timestamp = info.LastPresentTime.QuadPart;
     guard.dup_             = dup_;
     released_              = false;
-
-    // staging texture is leaked intentionally (unmapped memory)
-    // FrameGuard dtor calls dup_->ReleaseFrame() which releases the staging
-    staging->Release();
     return guard;
 }
 

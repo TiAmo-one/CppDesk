@@ -30,6 +30,7 @@ private:
     sockaddr_in peer_    = {};
     uint64_t    seq_     = 0;
     uint64_t    remoteSeq_ = 0;
+    bool        hasRemoteSeq_ = false;
     uint8_t     aesKey_[16] = {};
     bool        hasKey_  = false;
 };

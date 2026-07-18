@@ -17,3 +17,31 @@ target_link_libraries(controller PRIVATE
     ${FFMPEG_LIBRARIES}
     nlohmann_json::nlohmann_json libsodium
 )
+# Auto-copy runtime DLLs to output
+add_custom_command(TARGET controller POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "C:/vcpkg-build/installed/x64-windows/bin/avcodec-62.dll"
+        $<TARGET_FILE_DIR:controller>
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "C:/vcpkg-build/installed/x64-windows/bin/avdevice-62.dll"
+        $<TARGET_FILE_DIR:controller>
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "C:/vcpkg-build/installed/x64-windows/bin/avfilter-11.dll"
+        $<TARGET_FILE_DIR:controller>
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "C:/vcpkg-build/installed/x64-windows/bin/avformat-62.dll"
+        $<TARGET_FILE_DIR:controller>
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "C:/vcpkg-build/installed/x64-windows/bin/avutil-60.dll"
+        $<TARGET_FILE_DIR:controller>
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "C:/vcpkg-build/installed/x64-windows/bin/swresample-6.dll"
+        $<TARGET_FILE_DIR:controller>
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "C:/vcpkg-build/installed/x64-windows/bin/swscale-9.dll"
+        $<TARGET_FILE_DIR:controller>
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "C:/vcpkg-build/installed/x64-windows/bin/libsodium.dll"
+        $<TARGET_FILE_DIR:controller>
+    COMMENT "Copying runtime DLLs to controller output"
+)
