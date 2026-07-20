@@ -1,4 +1,4 @@
-﻿# Build output
+# Build output
 build/
 
 # IDE
@@ -20,3 +20,9 @@ fix_*.py
 
 # DLLs (copied from vcpkg)
 *.dll
+
+# Superpowers auto-generated
+docs/superpowers/
+
+# Temp tools/scripts
+tools/
