@@ -247,7 +247,7 @@ void SignalServer::HandleMessage(SOCKET sock, const std::string& msg) {
             std::cout << "Controller joined: " << roomId << std::endl;
 
         } else if (type == "sdp" || type == "ice" ||
-                   type == "p2p_established" || type == "p2p_failed") {
+                   type == "p2p_established" || type == "p2p_failed" || type == "relay_data") {
             // Forward to peer
             SOCKET peer = GetPeer(sock);
             if (peer != INVALID_SOCKET) SendJson(peer, j);

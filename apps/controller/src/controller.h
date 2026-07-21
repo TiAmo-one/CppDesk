@@ -7,6 +7,7 @@
 #include "libui.h"
 #include "libclipboard.h"
 #include "libfiletransfer.h"
+#include <chrono>
 #include "libproto.h"
 #include <nlohmann/json.hpp>
 
@@ -32,8 +33,19 @@ private:
     network::WSAInit      wsa_;
     network::SignalClient signal_;
     network::PeerChannel  channel_;
+    network::RelayChannel relayChannel_;
     network::UdpSocket    p2pSocket_;
     sockaddr_in           peerAddr_ = {};
+
+    // ECDH key exchange
+    uint8_t myPublicKey_[32] = {};
+    uint8_t mySecretKey_[32] = {};
+    uint8_t sharedKey_[16] = {};
+    bool    hasSharedKey_ = false;
+    bool    relayMode_    = false;
+
+    // Keep-alive
+    std::chrono::steady_clock::time_point lastKeepAlive_;
 
     ui::RenderWindow      window_;
     std::atomic<bool> p2pReady_{false};

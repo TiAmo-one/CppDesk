@@ -1,4 +1,4 @@
-add_library(libnetwork STATIC src/udp_socket.cpp src/peer_channel.cpp src/stun.cpp src/signal_client.cpp src/hole_punch.cpp)
+add_library(libnetwork STATIC src/udp_socket.cpp src/peer_channel.cpp src/stun.cpp src/signal_client.cpp src/hole_punch.cpp src/relay_channel.cpp)
 target_include_directories(libnetwork PUBLIC include ${CMAKE_SOURCE_DIR}/libs/libproto/include)
 target_include_directories(libnetwork PRIVATE C:/vcpkg-build/installed/x64-windows/include)
 target_link_directories(libnetwork PRIVATE C:/vcpkg-build/installed/x64-windows/lib C:/vcpkg-build/packages/libsodium_x64-windows/lib)

@@ -10,6 +10,7 @@ struct SignalCallbacks {
     std::function<void()> onConnected;
     std::function<void(const std::string& type, const std::string& data)> onMessage;
     std::function<void(const std::string& error)> onError;
+    std::function<void(const std::string& data)> onRelayData;
 };
 
 class SignalClient {
@@ -23,7 +24,14 @@ public:
 
     bool Send(const std::string& json);
     void Poll(int timeoutMs = 0);
-    void SetCallbacks(SignalCallbacks cb) { cb_ = cb; }
+    void SetCallbacks(SignalCallbacks cb) {
+        if (cb.onConnected) cb_.onConnected = std::move(cb.onConnected);
+        if (cb.onMessage)  cb_.onMessage  = std::move(cb.onMessage);
+        if (cb.onError)    cb_.onError    = std::move(cb.onError);
+        if (cb.onRelayData) cb_.onRelayData = std::move(cb.onRelayData);
+    }
+
+    bool SendRelayData(const std::string& base64Data);
 
 private:
     SOCKET sock_ = INVALID_SOCKET;

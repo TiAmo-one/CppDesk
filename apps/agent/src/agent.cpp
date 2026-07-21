@@ -35,7 +35,14 @@ int Agent::Run() {
                     std::cerr << "[AGENT] Registered, waiting for controller..." << std::endl;
 
                 } else if (type == "peer_connect") {
-                    std::cerr << "[AGENT] peer_connect received, sending SDP..." << std::endl;
+                    std::cerr << "[AGENT] peer_connect received, generating keypair..." << std::endl;
+                    if (!network::GenerateKeyPair(myPublicKey_, mySecretKey_)) {
+                        std::cerr << "[AGENT] Keypair generation failed!" << std::endl;
+                        return;
+                    }
+                    hasSharedKey_ = false;
+                    relayMode_ = false;
+                    std::cerr << "[AGENT] Keypair generated, querying STUN..." << std::endl;
                     sockaddr_in stunAddr = {};
                     if (!network::stun::GetMappedAddress(p2pSocket_.GetNative(), stunAddr)) {
                         std::cerr << "[AGENT] STUN query failed, using LAN-only candidates" << std::endl;
@@ -53,6 +60,22 @@ int Agent::Run() {
                         cands += c;
                     }
                     sdpMsg["data"] = cands;
+                    // Base64 encode public key
+                    {
+                        static const char* b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+                        std::string pk;
+                        pk.reserve(44);
+                        for (int i = 0; i < 32; i += 3) {
+                            uint32_t n = (uint32_t)myPublicKey_[i] << 16;
+                            if (i + 1 < 32) n |= (uint32_t)myPublicKey_[i + 1] << 8;
+                            if (i + 2 < 32) n |= (uint32_t)myPublicKey_[i + 2];
+                            pk += b64[(n >> 18) & 0x3F];
+                            pk += b64[(n >> 12) & 0x3F];
+                            pk += (i + 1 < 32) ? b64[(n >> 6) & 0x3F] : '=';
+                            pk += (i + 2 < 32) ? b64[n & 0x3F] : '=';
+                        }
+                        sdpMsg["public_key"] = pk;
+                    }
                     std::cerr << "[AGENT] SDP candidates: " << cands << std::endl;
                     signal_.Send(sdpMsg.dump());
 
@@ -68,6 +91,42 @@ int Agent::Run() {
                         pos = (comma == std::string::npos) ? cands.size() : comma + 1;
                     }
 
+                    // Derive shared key from peer's public key
+                    if (!hasSharedKey_) {
+                        if (j.contains("public_key") && j["public_key"].is_string()) {
+                            std::string pkB64 = j["public_key"].get<std::string>();
+                            uint8_t peerPk[32] = {};
+                            try {
+                                static const unsigned char dtable[256] = {
+                                    255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,
+                                    255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,
+                                    255,255,255,255,255,255,255,255,255,255,255,62, 255,255,255,63,
+                                    52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 255,255,255,0,  255,255,
+                                    255,0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11, 12, 13, 14,
+                                    15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 255,255,255,255,255,
+                                    255,26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
+                                    41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 255,255,255,255,255,
+                                };
+                                uint32_t accum = 0; int bits = 0; int outIdx = 0;
+                                for (size_t i = 0; i < pkB64.size() && outIdx < 32; i++) {
+                                    unsigned char v = dtable[(unsigned char)pkB64[i]];
+                                    if (v == 255) continue;
+                                    accum = (accum << 6) | v;
+                                    bits += 6;
+                                    if (bits >= 8) { bits -= 8; peerPk[outIdx++] = (uint8_t)(accum >> bits); }
+                                }
+                                if (outIdx == 32 && network::DeriveSharedKey(peerPk, mySecretKey_, sharedKey_)) {
+                                    hasSharedKey_ = true;
+                                    std::cerr << "[AGENT] Shared key derived from SDP" << std::endl;
+                                } else {
+                                    std::cerr << "[AGENT] Failed to derive shared key" << std::endl;
+                                }
+                            } catch (...) {
+                                std::cerr << "[AGENT] Public key decode error" << std::endl;
+                            }
+                        }
+                    }
+
                     sockaddr_in peer = {};
                     if (!remoteSdp_.candidates.empty()) {
                         auto& c = remoteSdp_.candidates[0];
@@ -81,33 +140,43 @@ int Agent::Run() {
                         }
                     }
                     if (peer.sin_port != 0) {
-                        // Try hole punch first, fall back to direct connect
+                        // Try UDP hole punch first
                         sockaddr_in punchedPeer = {};
                         bool punched = network::HolePunch(p2pSocket_, remoteSdp_, punchedPeer);
 
-                        sockaddr_in& targetAddr = punched ? punchedPeer : peer;
                         if (punched) {
                             char ip[64];
                             inet_ntop(AF_INET, &punchedPeer.sin_addr, ip, sizeof(ip));
                             std::cerr << "[AGENT] Hole punch succeeded! Peer at " << ip << ":" << ntohs(punchedPeer.sin_port) << std::endl;
+                            peerAddr_ = punchedPeer;
+                            relayMode_ = false;
+                            if (hasSharedKey_) {
+                                channel_.Init(p2pSocket_.GetNative(), punchedPeer);
+                                channel_.SetKey(sharedKey_);
+                                p2pReady_ = true;
+                                lastKeepAlive_ = std::chrono::steady_clock::now();
+                                json done;
+                                done["type"] = "p2p_established";
+                                signal_.Send(done.dump());
+                                std::cerr << "[AGENT] P2P channel established (direct)" << std::endl;
+                            } else {
+                                std::cerr << "[AGENT] P2P punched but no shared key!" << std::endl;
+                            }
                         } else {
-                            std::cerr << "[AGENT] Hole punch failed, trying direct connect..." << std::endl;
-                        }
-
-                        peerAddr_ = targetAddr;
-                        uint8_t key[16];
-                        std::cerr << "[AGENT] Starting KeyExchange..." << std::endl;
-                        if (network::KeyExchange(p2pSocket_, targetAddr, key)) {
-                            channel_.Init(p2pSocket_.GetNative(), targetAddr);
-                            channel_.SetKey(key);
-                            p2pReady_ = true;
-                            json done;
-                            done["type"] = "p2p_established";
-                            signal_.Send(done.dump());
-                            std::cerr << "[AGENT] P2P ready!" << std::endl;
-                        } else {
-                            std::cerr << "[AGENT] KeyExchange FAILED!" << std::endl;
-                            network::DrainSocket(p2pSocket_);
+                            std::cerr << "[AGENT] Hole punch failed, falling back to relay..." << std::endl;
+                            if (hasSharedKey_) {
+                                relayChannel_.Init(&signal_);
+                                relayChannel_.SetKey(sharedKey_);
+                                relayMode_ = true;
+                                p2pReady_ = true;
+                                lastKeepAlive_ = std::chrono::steady_clock::now();
+                                json done;
+                                done["type"] = "p2p_established";
+                                signal_.Send(done.dump());
+                                std::cerr << "[AGENT] Relay channel established (relay mode)" << std::endl;
+                            } else {
+                                std::cerr << "[AGENT] Relay fallback failed: no shared key" << std::endl;
+                            }
                         }
                     } else {
                         std::cerr << "[AGENT] Failed to parse remote address" << std::endl;
@@ -310,7 +379,38 @@ void Agent::MainLoop() {
         }
 
         // Process incoming input
-        channel_.Poll(0, [this](proto::FrameType type, uint64_t,
+        if (relayMode_) {
+            relayChannel_.Poll(0, [this](proto::FrameType type, uint64_t,
+                                 const uint8_t* data, uint16_t len) {
+                switch (type) {
+                case proto::FrameType::MouseMove:
+                    if (serverHost_ == "127.0.0.1") break;
+                    if (len >= sizeof(proto::MouseMovePayload)) {
+                        auto* m = (const proto::MouseMovePayload*)data;
+                        input::MoveMouse(m->x, m->y);
+                    }
+                    break;
+                case proto::FrameType::MouseBtn:
+                    if (serverHost_ == "127.0.0.1") break;
+                    if (len >= sizeof(proto::MouseBtnPayload)) {
+                        auto* b = (const proto::MouseBtnPayload*)data;
+                        input::MouseButtonEvent((input::MouseButton)b->button, b->down != 0);
+                    }
+                    break;
+                case proto::FrameType::KeyEvent:
+                    if (serverHost_ == "127.0.0.1") break;
+                    if (len >= sizeof(proto::KeyEventPayload)) {
+                        auto* k = (const proto::KeyEventPayload*)data;
+                        input::KeyEvent(k->vkCode, k->down != 0);
+                    }
+                    break;
+                case proto::FrameType::Heartbeat:
+                    break;
+                default: break;
+                }
+            });
+        } else {
+            channel_.Poll(0, [this](proto::FrameType type, uint64_t,
                                  const uint8_t* data, uint16_t len) {
             switch (type) {
             case proto::FrameType::MouseMove:
@@ -337,6 +437,7 @@ void Agent::MainLoop() {
             default: break;
             }
         });
+        } // end else (non-relay)
 
         clipboard::ClipboardData cbData;
         if (clipboard_.Check(cbData)) {
@@ -345,9 +446,23 @@ void Agent::MainLoop() {
                 if (utf8len > 1) {
                     std::string utf8(utf8len - 1, 0);
                     WideCharToMultiByte(CP_UTF8, 0, cbData.text.c_str(), -1, &utf8[0], utf8len, nullptr, nullptr);
-                    channel_.SendFrame(proto::FrameType::ClipboardText, utf8.data(), (uint16_t)utf8.size());
+                    if (relayMode_) {
+                        relayChannel_.SendFrame(proto::FrameType::ClipboardText, utf8.data(), (uint16_t)utf8.size());
+                    } else {
+                        channel_.SendFrame(proto::FrameType::ClipboardText, utf8.data(), (uint16_t)utf8.size());
+                    }
                 }
             }
+        }
+        // Keep-alive: send heartbeat every 15s
+        auto now = std::chrono::steady_clock::now();
+        if (std::chrono::duration_cast<std::chrono::seconds>(now - lastKeepAlive_).count() >= 15) {
+            if (relayMode_) {
+                relayChannel_.SendFrame(proto::FrameType::Heartbeat, nullptr, 0);
+            } else if (p2pReady_) {
+                channel_.SendFrame(proto::FrameType::Heartbeat, nullptr, 0);
+            }
+            lastKeepAlive_ = now;
         }
     }
     std::cerr << "[AGENT] MainLoop exited" << std::endl;

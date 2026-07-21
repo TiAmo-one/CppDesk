@@ -1,4 +1,7 @@
 ﻿#include "libnetwork/signal_client.h"
+#include <nlohmann/json.hpp>
+
+using json = nlohmann::json;
 #include <ws2tcpip.h>
 #include <random>
 #include <sstream>
@@ -131,8 +134,22 @@ void SignalClient::Poll(int timeoutMs) {
         std::string msg = ReadFrame();
         if (msg.empty()) break;
         if (cb_.onMessage) cb_.onMessage("", msg);
+        // Check for relay_data
+        try {
+            json j = json::parse(msg);
+            if (j.value("type", "") == "relay_data" && cb_.onRelayData) {
+                cb_.onRelayData(j.value("data", ""));
+            }
+        } catch (...) {}
         tv = {0, 0};
     }
+}
+
+bool SignalClient::SendRelayData(const std::string& base64Data) {
+    json j;
+    j["type"] = "relay_data";
+    j["data"] = base64Data;
+    return Send(j.dump());
 }
 
 void SignalClient::Disconnect() {

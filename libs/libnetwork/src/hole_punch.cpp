@@ -112,5 +112,21 @@ bool KeyExchange(UdpSocket& sock, const sockaddr_in& peer,
     return true;
 }
 
+bool GenerateKeyPair(uint8_t publicKey[32], uint8_t secretKey[32]) {
+    if (sodium_init() < 0) return false;
+    crypto_box_keypair(publicKey, secretKey);
+    return true;
+}
+
+bool DeriveSharedKey(const uint8_t peerPublicKey[32],
+                     const uint8_t ourSecretKey[32],
+                     uint8_t outSharedKey[16]) {
+    if (sodium_init() < 0) return false;
+    uint8_t shared[crypto_box_BEFORENMBYTES];
+    if (crypto_box_beforenm(shared, peerPublicKey, ourSecretKey) != 0) return false;
+    memcpy(outSharedKey, shared, 16);
+    return true;
+}
+
 } // namespace network
 
